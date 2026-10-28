@@ -89,4 +89,46 @@ describe("FilesPage", () => {
     await waitFor(() => expect(screen.getByText("delete-me.json 파일을 삭제했습니다.")).toBeInTheDocument());
     expect(screen.queryByRole("link", { name: "delete-me.json" })).not.toBeInTheDocument();
   });
+
+  it("체크한 여러 파일을 한 번에 삭제한다", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <MemoryRouter>
+        <WorkspaceProvider>
+          <FilesPage />
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    const first = new File([JSON.stringify([{ id: 1 }])], "bulk-first.json", { type: "application/json" });
+    const second = new File([JSON.stringify([{ id: 2 }])], "bulk-second.json", { type: "application/json" });
+
+    fireEvent.change(input as HTMLInputElement, { target: { files: [first, second] } });
+    fireEvent.click(await screen.findByRole("checkbox", { name: "bulk-first.json 선택" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "bulk-second.json 선택" }));
+    expect(screen.getByText("2개 선택")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "선택한 파일 삭제" }));
+
+    expect(confirm).toHaveBeenCalledWith("선택한 2개 파일과 관련 처리 결과를 모두 삭제할까요?");
+    await waitFor(() => expect(screen.getByText("2개 파일을 삭제했습니다.")).toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: "bulk-first.json" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "bulk-second.json" })).not.toBeInTheDocument();
+  });
+
+  it("전체 목록을 확인 후 초기화한다", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <MemoryRouter>
+        <WorkspaceProvider>
+          <FilesPage />
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "전체 목록 초기화" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/^전체 \d+개 파일.*되돌릴 수 없습니다\.$/));
+    await waitFor(() => expect(screen.getByText(/전체 0개 중 0개 표시/)).toBeInTheDocument());
+    expect(screen.getByText("조건에 맞는 파일이 없습니다. 검색어나 필터를 변경해 보세요.")).toBeInTheDocument();
+  });
 });

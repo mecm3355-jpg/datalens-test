@@ -34,6 +34,7 @@ type ReviewState = {
 
 type StoredWorkspace = {
   extraFiles: DataFile[];
+  deletedFileIds: string[];
   cleaningDecisions: Record<string, CleaningDecision>;
   appliedCleaning: Record<string, string[]>;
   artifacts: Record<string, DemoCleaningArtifact>;
@@ -83,11 +84,11 @@ function inferCategory(name: string): FileCategory {
 
 function readStoredWorkspace(): StoredWorkspace {
   if (typeof window === "undefined") {
-    return { extraFiles: [], cleaningDecisions: {}, appliedCleaning: {}, artifacts: {} };
+    return { extraFiles: [], deletedFileIds: [], cleaningDecisions: {}, appliedCleaning: {}, artifacts: {} };
   }
   try {
     const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null") as StoredWorkspace | null;
-    if (!stored) return { extraFiles: [], cleaningDecisions: {}, appliedCleaning: {}, artifacts: {} };
+    if (!stored) return { extraFiles: [], deletedFileIds: [], cleaningDecisions: {}, appliedCleaning: {}, artifacts: {} };
     return {
       extraFiles: (stored.extraFiles ?? []).map((file) =>
         file.status === "queued" || file.status === "processing"
@@ -99,12 +100,13 @@ function readStoredWorkspace(): StoredWorkspace {
             }
           : file,
       ),
+      deletedFileIds: stored.deletedFileIds ?? [],
       cleaningDecisions: stored.cleaningDecisions ?? {},
       appliedCleaning: stored.appliedCleaning ?? {},
       artifacts: stored.artifacts ?? {},
     };
   } catch {
-    return { extraFiles: [], cleaningDecisions: {}, appliedCleaning: {}, artifacts: {} };
+    return { extraFiles: [], deletedFileIds: [], cleaningDecisions: {}, appliedCleaning: {}, artifacts: {} };
   }
 }
 
@@ -116,6 +118,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const api = useApiWorkspace(DATA_MODE === "api");
   const stored = useMemo(() => readStoredWorkspace(), []);
   const [extraFiles, setExtraFiles] = useState<DataFile[]>(stored.extraFiles);
+  const [deletedFileIds, setDeletedFileIds] = useState<string[]>(stored.deletedFileIds);
   const [artifacts, setArtifacts] = useState<Record<string, DemoCleaningArtifact>>(stored.artifacts);
   const [appliedCleaning, setAppliedCleaning] = useState<Record<string, string[]>>(stored.appliedCleaning);
   const fileHandles = useRef(new Map<string, File>());
@@ -134,12 +137,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       window.localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ extraFiles, cleaningDecisions, appliedCleaning, artifacts } satisfies StoredWorkspace),
+        JSON.stringify({ extraFiles, deletedFileIds, cleaningDecisions, appliedCleaning, artifacts } satisfies StoredWorkspace),
       );
     } catch {
       // Storage may be unavailable or full. The current session continues to work in memory.
     }
-  }, [appliedCleaning, artifacts, cleaningDecisions, extraFiles]);
+  }, [appliedCleaning, artifacts, cleaningDecisions, deletedFileIds, extraFiles]);
 
   const updateExtraFile = useCallback((id: string, patch: Partial<DataFile>) => {
     setExtraFiles((current) => current.map((file) => (file.id === id ? { ...file, ...patch } : file)));
@@ -184,7 +187,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loading: DATA_MODE === "api" ? api.loading : false,
       workspaceError: DATA_MODE === "api" ? api.error : null,
       dashboardSummary: DATA_MODE === "api" ? api.dashboard : null,
-      files: DATA_MODE === "api" ? api.files : [...extraFiles, ...seedFiles],
+      files: DATA_MODE === "api"
+        ? api.files
+        : [...extraFiles, ...seedFiles].filter((file) => !deletedFileIds.includes(file.id)),
       addFiles: async (list) => {
         if (DATA_MODE === "api") return api.addFiles(list);
         const today = new Date().toISOString().slice(0, 10);
@@ -296,6 +301,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       deleteFile: async (fileId) => {
         if (DATA_MODE === "api") return api.deleteFile(fileId);
         setExtraFiles((current) => current.filter((file) => file.id !== fileId));
+        setDeletedFileIds((current) => current.includes(fileId) ? current : [...current, fileId]);
       },
       jobForFile: (fileId) => {
         if (DATA_MODE !== "api") return null;
@@ -319,6 +325,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       artifacts,
       cleaningDecisions,
       decisionMap,
+      deletedFileIds,
       extraFiles,
       extraMappings,
       processFile,

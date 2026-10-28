@@ -36,6 +36,8 @@ export function FilesPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [recentUploadIds, setRecentUploadIds] = useState<string[]>([]);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const filteredFiles = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
@@ -54,6 +56,17 @@ export function FilesPage() {
       return file ? [file] : [];
     });
   }, [files, recentUploadIds]);
+
+  const selectableFilteredFiles = useMemo(
+    () => filteredFiles.filter((file) => !file.isUploading),
+    [filteredFiles],
+  );
+  const selectedFiles = useMemo(
+    () => files.filter((file) => selectedIds.has(file.id) && !file.isUploading),
+    [files, selectedIds],
+  );
+  const allFilteredSelected = selectableFilteredFiles.length > 0
+    && selectableFilteredFiles.every((file) => selectedIds.has(file.id));
 
   const handleFiles = async (pickedFiles: File[]) => {
     const accepted: File[] = [];
@@ -125,13 +138,18 @@ export function FilesPage() {
   };
 
   const handleDelete = async (file: DataFile) => {
-    if (file.isUploading || deletingIds.has(file.id)) return;
+    if (file.isUploading || isBulkDeleting || deletingIds.has(file.id)) return;
     if (!window.confirm(`'${file.originalName}' 파일과 관련 처리 결과를 모두 삭제할까요?`)) return;
 
     setDeletingIds((current) => new Set(current).add(file.id));
     try {
       await deleteFile(file.id);
       setRecentUploadIds((current) => current.filter((id) => id !== file.id));
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(file.id);
+        return next;
+      });
       setUploadFeedback({ tone: "success", message: `${file.originalName} 파일을 삭제했습니다.` });
     } catch (error) {
       setUploadFeedback({
@@ -145,6 +163,84 @@ export function FilesPage() {
         return next;
       });
     }
+  };
+
+  const toggleSelection = (fileId: string, selected: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(fileId);
+      else next.delete(fileId);
+      return next;
+    });
+  };
+
+  const toggleFilteredSelection = (selected: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const file of selectableFilteredFiles) {
+        if (selected) next.add(file.id);
+        else next.delete(file.id);
+      }
+      return next;
+    });
+  };
+
+  const deleteMany = async (targets: DataFile[]) => {
+    const deletable = targets.filter((file) => !file.isUploading);
+    if (deletable.length === 0 || isBulkDeleting) return;
+
+    setIsBulkDeleting(true);
+    setDeletingIds((current) => new Set([...current, ...deletable.map((file) => file.id)]));
+    const succeeded: string[] = [];
+    const failed: DataFile[] = [];
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < deletable.length) {
+        const file = deletable[cursor];
+        cursor += 1;
+        try {
+          await deleteFile(file.id);
+          succeeded.push(file.id);
+        } catch {
+          failed.push(file);
+        }
+      }
+    };
+
+    try {
+      const workerCount = Math.min(4, deletable.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
+      const succeededSet = new Set(succeeded);
+      setRecentUploadIds((current) => current.filter((id) => !succeededSet.has(id)));
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        for (const id of succeeded) next.delete(id);
+        return next;
+      });
+      setUploadFeedback({
+        tone: failed.length > 0 ? "error" : "success",
+        message: failed.length > 0
+          ? `${succeeded.length}개 삭제 완료 · ${failed.length}개 실패: ${failed.map((file) => file.originalName).join(", ")}`
+          : `${succeeded.length}개 파일을 삭제했습니다.`,
+      });
+    } finally {
+      const targetIds = new Set(deletable.map((file) => file.id));
+      setDeletingIds((current) => new Set([...current].filter((id) => !targetIds.has(id))));
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (selectedFiles.length === 0) return;
+    if (!window.confirm(`선택한 ${selectedFiles.length}개 파일과 관련 처리 결과를 모두 삭제할까요?`)) return;
+    await deleteMany(selectedFiles);
+  };
+
+  const resetAllFiles = async () => {
+    const targets = files.filter((file) => !file.isUploading);
+    if (targets.length === 0 || files.some((file) => file.isUploading)) return;
+    if (!window.confirm(`전체 ${targets.length}개 파일과 관련 결과를 모두 삭제하고 목록을 초기화할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
+    await deleteMany(targets);
   };
 
   const hasFilters = query.trim() !== "" || status !== "all" || category !== "all";
@@ -313,6 +409,38 @@ export function FilesPage() {
           </label>
         </div>
 
+        <div className="file-bulk-actions" aria-label="파일 일괄 관리">
+          <label className="file-select-all">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              disabled={selectableFilteredFiles.length === 0 || isBulkDeleting}
+              onChange={(event) => toggleFilteredSelection(event.target.checked)}
+            />
+            <span>현재 표시 파일 전체 선택</span>
+          </label>
+          <span className="caption">{formatNumber(selectedFiles.length)}개 선택</span>
+          <div className="cluster">
+            <button
+              className="btn btn-secondary btn-danger-secondary"
+              type="button"
+              disabled={selectedFiles.length === 0 || isBulkDeleting}
+              onClick={() => void deleteSelected()}
+            >
+              {isBulkDeleting ? "삭제 처리 중" : "선택한 파일 삭제"}
+            </button>
+            <button
+              className="btn btn-danger"
+              type="button"
+              disabled={files.length === 0 || files.some((file) => file.isUploading) || isBulkDeleting}
+              title={files.some((file) => file.isUploading) ? "업로드가 끝난 뒤 전체 목록을 초기화할 수 있습니다." : undefined}
+              onClick={() => void resetAllFiles()}
+            >
+              전체 목록 초기화
+            </button>
+          </div>
+        </div>
+
         <DataTable
           framed={false}
           rows={filteredFiles}
@@ -323,15 +451,25 @@ export function FilesPage() {
               key: "name",
               header: "파일",
               render: (file) => (
-                file.isUploading ? (
-                  <span className="file-name-link" aria-label={`${file.originalName} 업로드 중`}>
-                    {file.originalName}
-                  </span>
-                ) : (
-                  <Link className="link file-name-link" to={`/files/${file.id}`}>
-                    {file.originalName}
-                  </Link>
-                )
+                <div className="file-name-cell">
+                  <input
+                    className="file-select-checkbox"
+                    type="checkbox"
+                    checked={selectedIds.has(file.id)}
+                    disabled={Boolean(file.isUploading) || deletingIds.has(file.id) || isBulkDeleting}
+                    aria-label={`${file.originalName} 선택`}
+                    onChange={(event) => toggleSelection(file.id, event.target.checked)}
+                  />
+                  {file.isUploading ? (
+                    <span className="file-name-link" aria-label={`${file.originalName} 업로드 중`}>
+                      {file.originalName}
+                    </span>
+                  ) : (
+                    <Link className="link file-name-link" to={`/files/${file.id}`}>
+                      {file.originalName}
+                    </Link>
+                  )}
+                </div>
               ),
             },
             {
@@ -377,7 +515,7 @@ export function FilesPage() {
                       <button
                         className="btn btn-text btn-text-danger"
                         type="button"
-                        disabled={isDeleting}
+                        disabled={isDeleting || isBulkDeleting}
                         aria-label={`${file.originalName} 삭제`}
                         onClick={() => void handleDelete(file)}
                       >

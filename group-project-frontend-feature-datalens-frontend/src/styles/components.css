@@ -315,6 +315,23 @@
   color: var(--color-danger);
 }
 
+.btn-danger {
+  background: var(--color-danger);
+  color: #fff;
+  border-color: var(--color-danger);
+}
+
+.btn-danger-secondary {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 65%, transparent);
+}
+
+.btn-danger:disabled,
+.btn-danger-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .link {
   color: var(--color-primary);
   font-size: 14px;
@@ -963,6 +980,45 @@ td.num {
   margin-top: var(--space-xxs);
 }
 
+.file-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-hairline-on-dark);
+}
+
+.file-bulk-actions > .cluster {
+  margin-left: auto;
+}
+
+.file-select-all,
+.file-name-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.file-select-all {
+  color: var(--color-body);
+  cursor: pointer;
+}
+
+.file-select-all input,
+.file-select-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--color-primary);
+  flex: 0 0 auto;
+}
+
+.file-select-all:has(input:disabled) {
+  color: var(--color-muted);
+  cursor: not-allowed;
+}
+
 .file-filters {
   align-items: flex-end;
   margin-bottom: var(--space-lg);
@@ -1354,6 +1410,19 @@ td.num {
 
   .file-filters .filter-select {
     flex: 1 1 calc(50% - var(--space-sm));
+  }
+
+  .file-bulk-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .file-bulk-actions > .cluster {
+    margin-left: 0;
+  }
+
+  .file-bulk-actions .btn {
+    flex: 1;
   }
 
   .upload-batch-meta {
