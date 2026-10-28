@@ -2,7 +2,11 @@ import axios, { type AxiosRequestConfig } from "axios";
 import { AppError } from "./AppError";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-const client = axios.create({ baseURL: BASE_URL, headers: { Accept: "application/json" } });
+const client = axios.create({
+  baseURL: BASE_URL,
+  headers: { Accept: "application/json" },
+  withCredentials: true,
+});
 
 export const apiRoutes = {
   dashboard: "/api/v1/dashboard/summary",
@@ -12,6 +16,8 @@ export const apiRoutes = {
   job: (jobId: string) => `/api/v1/jobs/${jobId}`,
   processFile: (fileId: string) => `/api/v1/files/${fileId}/process`,
   preview: (fileId: string) => `/api/v1/files/${fileId}/preview`,
+  cleanedPreview: (fileId: string, version?: number) =>
+    `/api/v1/files/${fileId}/cleaned-preview${version ? `?version=${version}` : ""}`,
   quality: (fileId: string) => `/api/v1/files/${fileId}/quality`,
   analysis: (fileId: string) => `/api/v1/files/${fileId}/analysis`,
   cleaningSuggestions: (fileId: string) => `/api/v1/files/${fileId}/cleaning-suggestions`,
@@ -19,6 +25,17 @@ export const apiRoutes = {
   versions: (fileId: string) => `/api/v1/files/${fileId}/versions`,
   export: (fileId: string, format: "csv" | "json") =>
     `/api/v1/files/${fileId}/export?format=${format}`,
+  deleteFile: (fileId: string) => `/api/v1/files/${fileId}`,
+  complaints: "/api/v1/complaints",
+  taxonomy: "/api/v1/complaints/categories",
+  candidates: "/api/v1/complaints/categories/candidates",
+  candidateDecision: (candidateId: string) =>
+    `/api/v1/complaints/categories/candidates/${candidateId}/decision`,
+  reviews: "/api/v1/complaints/reviews",
+  review: (reviewId: string) => `/api/v1/complaints/reviews/${reviewId}`,
+  authSession: "/api/v1/auth/session",
+  authLogin: "/api/v1/auth/login",
+  authLogout: "/api/v1/auth/logout",
 } as const;
 
 /** API 경로와 fetch 옵션을 받아 JSON 응답을 반환하고 실패를 AppError로 변환합니다. */

@@ -2,10 +2,9 @@ import { useState } from "react";
 import { Button } from "../components/Button";
 import { CategoryTabs } from "../components/CategoryTabs";
 import { PageIntro } from "../components/PageIntro";
-import { candidates, categories, categoryById, CURRENT_PERIOD } from "../data/mock";
 import { formatNumber, formatPeriod } from "../lib/format";
 import { DECISION_LABEL } from "../lib/labels";
-import { useWorkspace } from "../state/workspace";
+import { useComplaintData } from "../state/complaintData";
 import type { CandidateDecision } from "../types";
 
 const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
@@ -15,21 +14,34 @@ const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
   { id: "held", label: "보류" },
   { id: "merged", label: "기존에 합침" },
 ];
+const CURRENT_PERIOD = new Date().toISOString().slice(0, 7);
 
 export function CandidatesPage() {
-  const workspace = useWorkspace();
+  const { candidates, categories, categoryById, decideCandidate, loading, error } = useComplaintData();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("pending");
   const [mergeTarget, setMergeTarget] = useState<Record<string, string>>({});
-  const visible = candidates.filter((item) => filter === "all" || workspace.candidateDecision(item.id) === filter);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const visible = candidates.filter((item) => filter === "all" || item.decision === filter);
+
+  const decide = async (id: string, decision: CandidateDecision, mergedIntoId?: string) => {
+    try {
+      await decideCandidate(id, decision, mergedIntoId);
+      setActionError(null);
+    } catch (decisionError) {
+      setActionError(decisionError instanceof Error ? decisionError.message : "후보 결정을 저장하지 못했습니다.");
+    }
+  };
 
   return (
     <div className="page">
       <PageIntro
-        eyebrow={formatPeriod(CURRENT_PERIOD)}
+        eyebrow={formatPeriod(candidates[0]?.period ?? CURRENT_PERIOD)}
         title="신규 후보"
         lede="미배정 민원 중 같은 군집이 5건 이상이거나 두 달 연속 등장한 유형입니다. 승인하면 다음 체계 버전에 들어갑니다."
       />
       <CategoryTabs />
+      {loading ? <p className="notice">후보 데이터를 불러오는 중입니다.</p> : null}
+      {error || actionError ? <p className="feedback feedback-error" role="alert">{actionError ?? error}</p> : null}
       <div className="filter-bar" aria-label="후보 상태">
         {FILTERS.map((item) => (
           <button
@@ -45,9 +57,8 @@ export function CandidatesPage() {
       {visible.length === 0 ? <p className="empty">이 상태의 후보가 없습니다.</p> : null}
       <div className="stack">
         {visible.map((candidate) => {
-          const decision = workspace.candidateDecision(candidate.id);
-          const mergedId = workspace.mergedInto(candidate.id);
-          const mergedName = categoryById(mergedId)?.name;
+          const decision = candidate.decision;
+          const mergedName = categoryById(mergeTarget[candidate.id] ?? null)?.name;
           return (
             <article className="card" key={candidate.id}>
               <div className="card-head">
@@ -76,8 +87,8 @@ export function CandidatesPage() {
               ))}
               {decision === "pending" ? (
                 <div className="action-row notice">
-                  <Button onClick={() => workspace.decideCandidate(candidate.id, "approved")}>승인</Button>
-                  <Button variant="secondary" onClick={() => workspace.decideCandidate(candidate.id, "held")}>
+                  <Button onClick={() => void decide(candidate.id, "approved")}>승인</Button>
+                  <Button variant="secondary" onClick={() => void decide(candidate.id, "held")}>
                     보류
                   </Button>
                   <label className="field field-merge">
@@ -99,7 +110,7 @@ export function CandidatesPage() {
                   <Button
                     variant="secondary"
                     onClick={() =>
-                      workspace.decideCandidate(
+                      void decide(
                         candidate.id,
                         "merged",
                         mergeTarget[candidate.id] ?? categories[0]?.categoryId,

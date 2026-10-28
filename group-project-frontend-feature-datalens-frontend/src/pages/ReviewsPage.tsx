@@ -3,17 +3,17 @@ import { Link } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
-import { categories, categoryById, complaintById, reviews } from "../data/mock";
 import { REVIEW_REASON_LABEL } from "../lib/labels";
-import { useWorkspace } from "../state/workspace";
+import { useComplaintData } from "../state/complaintData";
 
 export function ReviewsPage() {
-  const workspace = useWorkspace();
+  const { reviews, complaints, categories, categoryById, confirmReview, loading, error } = useComplaintData();
   const [choice, setChoice] = useState<Record<string, string>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
   const rows = reviews.map((review) => ({
     review,
-    complaint: complaintById(review.complaintId),
-    state: workspace.reviewState(review.id),
+    complaint: complaints.find((item) => item.id === review.complaintId),
+    state: { status: review.status, reviewedCategoryId: null as string | null },
   }));
   const pending = rows.filter((row) => row.state.status === "pending").length;
 
@@ -24,6 +24,8 @@ export function ReviewsPage() {
         title="검토"
         lede="애매한 배정, 긴급 민원, 속성이 비어 있는 민원을 사람이 확정합니다. 아래는 대표 검토 건입니다."
       />
+      {loading ? <p className="notice">검토 데이터를 불러오는 중입니다.</p> : null}
+      {error || actionError ? <p className="feedback feedback-error" role="alert">{actionError ?? error}</p> : null}
       <DataTable
         rows={rows}
         rowKey={(row) => row.review.id}
@@ -81,7 +83,13 @@ export function ReviewsPage() {
                       </option>
                     ))}
                   </select>
-                  <Button onClick={() => workspace.confirmReview(row.review.id, selected)}>확정</Button>
+                  <Button onClick={() => {
+                    void confirmReview(row.review.id, selected)
+                      .then(() => setActionError(null))
+                      .catch((reviewError: unknown) => {
+                        setActionError(reviewError instanceof Error ? reviewError.message : "검토 결과를 저장하지 못했습니다.");
+                      });
+                  }}>확정</Button>
                 </div>
               );
             },

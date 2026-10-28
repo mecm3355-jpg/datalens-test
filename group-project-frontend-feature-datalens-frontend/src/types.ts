@@ -46,6 +46,7 @@ export type DemoCleaningArtifact = {
   rules: CleaningRule[];
   preview: CleaningPreviewRow[];
   rows: Array<Record<string, string>>;
+  cleanedRows?: Array<Record<string, string>>;
   truncated: boolean;
   source: "parsed" | "metadata";
   analysis?: FileAnalysis;

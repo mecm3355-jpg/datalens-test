@@ -145,6 +145,8 @@ function statistics(analysis: ApiAnalysis): {
   frequencies: FrequencyItem[];
 } {
   const raw = analysis.analysis.statistics;
+  const rowCount = typeof analysis.analysis.rowCount === "number" ? analysis.analysis.rowCount : 0;
+  const columns = Array.isArray(analysis.analysis.columns) ? analysis.analysis.columns : [];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { numeric: [], frequencies: [] };
   const numeric: NumericSummary[] = [];
   const frequencies: FrequencyItem[] = [];
@@ -152,7 +154,21 @@ function statistics(analysis: ApiAnalysis): {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const entry = value as Record<string, unknown>;
     if (typeof entry.mean === "number" && typeof entry.min === "number" && typeof entry.max === "number") {
-      numeric.push({ field, count: 0, average: entry.mean, minimum: entry.min, maximum: entry.max });
+      const column = columns.find((item) => (
+        typeof item === "object" && item !== null && !Array.isArray(item)
+          && (item as Record<string, unknown>).name === field
+      ));
+      const missingCount = column && typeof column === "object" && !Array.isArray(column)
+        && typeof (column as Record<string, unknown>).missingCount === "number"
+        ? (column as Record<string, number>).missingCount
+        : 0;
+      numeric.push({
+        field,
+        count: Math.max(0, rowCount - missingCount),
+        average: entry.mean,
+        minimum: entry.min,
+        maximum: entry.max,
+      });
     }
     if (Array.isArray(entry.topValues)) {
       for (const item of entry.topValues.slice(0, 5)) {
@@ -172,6 +188,7 @@ export function toArtifact(
   preview: ApiPreview,
   analysis: ApiAnalysis,
   suggestions: ApiSuggestion[],
+  cleanedPreview: ApiPreview | null = null,
 ): DemoCleaningArtifact {
   const rows = previewRows(preview);
   const rules = toCleaningRules(suggestions);
@@ -181,6 +198,7 @@ export function toArtifact(
     source: preview.kind === "table" ? "parsed" : "metadata",
     truncated: (preview.rows?.length ?? preview.lines?.length ?? 0) >= preview.limit,
     rows,
+    cleanedRows: cleanedPreview ? previewRows(cleanedPreview) : undefined,
     rules,
     preview: comparisonRows(rows, rules),
     qualityIssues: analysis.quality.issues,

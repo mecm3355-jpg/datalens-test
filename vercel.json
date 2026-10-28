@@ -9,14 +9,13 @@
       "outputDirectory": "dist",
       "rewrites": [
         {
-          "source": "/api/blob-upload",
-          "destination": "/api/blob-upload"
-        },
-        {
           "source": "/(.*)",
           "destination": "/index.html"
         }
       ]
+    },
+    "blob_upload": {
+      "root": "group-project-blob-upload-service"
     },
     "backend": {
       "root": "group-project-backend-feature-datalens-backend",
@@ -27,7 +26,7 @@
     {
       "source": "/api/blob-upload",
       "destination": {
-        "service": "frontend"
+        "service": "blob_upload"
       }
     },
     {

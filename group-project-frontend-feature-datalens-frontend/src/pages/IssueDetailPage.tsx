@@ -2,13 +2,14 @@ import { Link, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
-import { categoryById, complaintsByIssue, issueById } from "../data/mock";
 import { formatDate, formatNumber } from "../lib/format";
 import { ASSIGN_LABEL } from "../lib/labels";
+import { useComplaintData } from "../state/complaintData";
 
 export function IssueDetailPage() {
   const { issueId = "" } = useParams();
-  const issue = issueById(issueId);
+  const { issues, complaints, categoryById } = useComplaintData();
+  const issue = issues.find((item) => item.id === issueId);
   if (!issue) {
     return (
       <div className="page">
@@ -20,7 +21,9 @@ export function IssueDetailPage() {
     );
   }
 
-  const samples = complaintsByIssue(issue.id);
+  const samples = complaints.filter((item) =>
+    item.categoryId === issue.categoryId && item.attributes.place === issue.place,
+  );
   const category = categoryById(issue.categoryId);
 
   return (

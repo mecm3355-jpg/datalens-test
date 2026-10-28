@@ -80,6 +80,14 @@ def test_suggest_clean_versions_export(db_client: TestClient, tmp_path: Path) ->
         ["3", "이영희", "40", "포항"],
     ]
 
+    preview = db_client.get(f"/api/v1/files/{file_id}/cleaned-preview")
+    assert preview.status_code == 200
+    assert preview.json()["data"]["rows"] == table[1:]
+    missing_preview = db_client.get(
+        f"/api/v1/files/{file_id}/cleaned-preview", params={"version": 2}
+    )
+    assert missing_preview.status_code == 404
+
     as_json = db_client.get(f"/api/v1/files/{file_id}/export", params={"format": "json"})
     assert json.loads(as_json.content)[1] == {
         "id": "2",

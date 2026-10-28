@@ -10,11 +10,13 @@ from app.repositories.results import ResultRepository
 from app.schemas.cleaning import CleanRequest, CleanRule
 from app.schemas.file import FileDocument
 from app.schemas.job import CLEAN_JOB_TYPE, JobDocument
+from app.schemas.preview_api import FilePreview
 from app.schemas.result import ResultDocument, ResultType
 from app.services.artifacts import job_params_key
 from app.services.cleaning import check_columns
 from app.services.export import MEDIA_TYPES, ExportFormat, convert
 from app.services.file_service import parse_file_id
+from app.services.preview import build_preview
 from app.services.storage import LocalStorage
 from app.services.suggestions import Suggestion, suggest_rules
 
@@ -145,6 +147,30 @@ class CleaningService:
         doc = await self._get_file(file_id)
         return await self._results.list_by_file(doc.id, result_type)
 
+    @staticmethod
+    def _artifact_key(result: ResultDocument) -> str | None:
+        """정제 결과 문서에서 외부에 노출하지 않는 저장 키를 안전하게 꺼낸다."""
+        artifacts = result.cleaning.get("artifacts")
+        if isinstance(artifacts, list) and artifacts and isinstance(artifacts[0], dict):
+            storage_key = artifacts[0].get("storageKey")
+            return storage_key if isinstance(storage_key, str) else None
+        return None
+
+    async def cleaned_preview(self, file_id: str, version: int | None) -> FilePreview:
+        """실제 정제 산출물의 앞 20행을 반환한다. version이 없으면 최신 결과를 사용한다."""
+        doc = await self._get_file(file_id)
+        history = await self._results.list_by_file(doc.id, "cleaning")
+        result = next(
+            (item for item in history if version is None or item.version == version), None
+        )
+        if result is None:
+            raise AppError("RESULT_NOT_FOUND", "미리 볼 정제 결과가 없습니다.", 404)
+        key = self._artifact_key(result)
+        source = await asyncio.to_thread(self._storage.path, key) if key else None
+        if source is None or not source.is_file():
+            raise AppError("ARTIFACT_MISSING", "정제 결과 파일이 저장소에 없습니다.", 409)
+        return await asyncio.to_thread(build_preview, str(doc.id), source, "csv")
+
     async def export(self, file_id: str, fmt: ExportFormat, version: int | None) -> ExportFile:
         """정제 결과 파일을 원하는 형식으로 준비한다. version이 없으면 최신 정제 결과.
 
@@ -161,12 +187,8 @@ class CleaningService:
             raise AppError("RESULT_NOT_FOUND", "다운로드할 정제 결과가 없습니다.", 404)
 
         # cleaning은 자유 형식 객체(JsonValue)라 타입을 하나씩 확인하며 산출물 위치를 꺼낸다
-        artifacts = result.cleaning.get("artifacts")
-        key = None
-        if isinstance(artifacts, list) and artifacts and isinstance(artifacts[0], dict):
-            storage_key = artifacts[0].get("storageKey")
-            key = storage_key if isinstance(storage_key, str) else None
-        source = self._storage.path(key) if key else None
+        key = self._artifact_key(result)
+        source = await asyncio.to_thread(self._storage.path, key) if key else None
         # DB 기록은 있는데 파일이 없는 불일치 상태라 404가 아닌 409로 구분한다
         if source is None or not source.is_file():
             raise AppError("ARTIFACT_MISSING", "정제 결과 파일이 저장소에 없습니다.", 409)

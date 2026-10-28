@@ -37,7 +37,7 @@ export function DataPage() {
       <PageIntro
         eyebrow="분석 및 리포트"
         title="데이터 품질 리포트"
-        lede="브라우저에서 계산한 통계와 해석 문장을 구분해 보여줍니다. 표시되는 수치는 업로드 파일에서 계산된 값만 사용합니다."
+        lede="서버가 업로드 파일에서 계산한 통계와 규칙 기반 해석을 구분해 보여줍니다."
       />
 
       <section className="card">
@@ -69,7 +69,7 @@ export function DataPage() {
 
           <section className="split">
             <article className="card">
-              <div className="card-head"><h2 className="title-sm">계산된 통계</h2><span className="pill">브라우저 계산</span></div>
+              <div className="card-head"><h2 className="title-sm">계산된 통계</h2><span className="pill">서버 계산</span></div>
               {analysis.numericSummaries.length > 0 ? (
                 <DataTable
                   framed={false}
@@ -104,7 +104,7 @@ export function DataPage() {
           </section>
 
           <article className="card report-card">
-            <div className="card-head"><div><h2 className="title-sm">분석 요약</h2><p className="caption">규칙 기반 데모 · AI 백엔드 연결 전</p></div><span className="pill pill-pending">자동 적용 안 함</span></div>
+            <div className="card-head"><div><h2 className="title-sm">분석 요약</h2><p className="caption">서버 분석 결과 · 규칙 기반 요약</p></div><span className="pill pill-pending">자동 적용 안 함</span></div>
             {report.map((line) => <p className="body report-line" key={line}>{line}</p>)}
             <p className="caption notice">AI 연결 후에도 통계 수치는 백엔드 계산 결과만 인용하고, 추천 규칙은 사용자 승인 전까지 실행하지 않습니다.</p>
           </article>

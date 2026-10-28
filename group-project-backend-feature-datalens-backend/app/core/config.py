@@ -1,8 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     mongodb_uri: str
     mongodb_db_name: str = "datalens"
 
+    # 운영 인증. AUTH_REQUIRED=true일 때 비밀번호 로그인과 서명된 HttpOnly 쿠키를 요구한다.
+    auth_required: bool = False
+    auth_password: SecretStr | None = None
+    auth_secret: SecretStr | None = None
+    auth_session_seconds: int = 8 * 60 * 60
+    auth_cookie_secure: bool = False
+
     # 독립 배포된 Vite 프런트엔드가 API를 호출할 수 있는 출처 목록.
     # 쉼표로 구분해 Vercel 운영 도메인과 로컬 개발 주소를 함께 지정한다.
     cors_origins: str = "http://localhost:5173"
@@ -29,6 +36,7 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 100 * 1024 * 1024
     max_zip_uncompressed_bytes: int = 1024 * 1024 * 1024
     max_zip_entries: int = 10_000
+    max_pdf_pages: int = 500
 
     # 워커(python -m app.worker): 대기 작업이 없을 때 다시 확인하는 간격,
     # 이 시간보다 오래 processing에 머문 작업은 워커가 멈춘 것으로 보고 실패 처리
@@ -61,6 +69,19 @@ class Settings(BaseSettings):
     # 민원 분석 임베딩(PRD 6장, 로컬). 캐시 폴더를 비우면 저장소의 embedding-cache를 쓴다
     embedding_model: str = "BAAI/bge-m3"
     embedding_cache_dir: Path | None = None
+
+    @model_validator(mode="after")
+    def validate_auth_configuration(self) -> Self:
+        """인증을 켠 배포가 빈 비밀번호나 약한 서명 키로 시작하지 않게 한다."""
+        if not self.auth_required:
+            return self
+        password = self.auth_password.get_secret_value() if self.auth_password else ""
+        secret = self.auth_secret.get_secret_value() if self.auth_secret else ""
+        if len(password) < 8:
+            raise ValueError("AUTH_REQUIRED=true이면 AUTH_PASSWORD를 8자 이상 설정해야 합니다.")
+        if len(secret) < 32:
+            raise ValueError("AUTH_REQUIRED=true이면 AUTH_SECRET을 32자 이상 설정해야 합니다.")
+        return self
 
     def allowed_cors_origins(self) -> list[str]:
         """쉼표로 구분한 CORS_ORIGINS를 빈 값 없이 정리한다.

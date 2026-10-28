@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
-import { categoryById, issues } from "../data/mock";
 import { formatDate, formatNumber } from "../lib/format";
+import { useComplaintData } from "../state/complaintData";
 import type { Issue } from "../types";
 
 type IssueFilter = "open" | "resolved" | "all";
@@ -15,6 +15,7 @@ const FILTERS: Array<{ id: IssueFilter; label: string }> = [
 ];
 
 export function IssuesPage() {
+  const { issues } = useComplaintData();
   const [filter, setFilter] = useState<IssueFilter>("open");
   const rows = issues
     .filter((issue) => filter === "all" || issue.status === filter)
@@ -45,6 +46,7 @@ export function IssuesPage() {
 }
 
 export function IssueTable({ rows }: { rows: Issue[] }) {
+  const { categoryById } = useComplaintData();
   return (
     <DataTable
       rows={rows}

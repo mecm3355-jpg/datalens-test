@@ -115,6 +115,45 @@ async def test_unexpected_error_hides_detail(db: AsyncDatabase[Document], tmp_pa
     assert "secret" not in job.error.message
 
 
+async def test_queue_unexpected_error_is_requeued_and_raised(
+    db: AsyncDatabase[Document], tmp_path: Path
+) -> None:
+    file, job = await seed(db)
+
+    async def handler(ctx: JobContext) -> None:
+        raise RuntimeError("temporary outage")
+
+    with pytest.raises(RuntimeError, match="temporary outage"):
+        await runner(db, tmp_path, handler).run_job(job.id, retry_unexpected=True)
+
+    file, job = await reload(db, file, job)
+    assert job.status == "queued"
+    assert job.stage == "retry_waiting"
+    assert job.error is not None and job.error.code == "INTERNAL_ERROR"
+    assert file.status == "queued"
+
+
+async def test_queue_retry_recovers_stale_processing_job(
+    db: AsyncDatabase[Document], tmp_path: Path
+) -> None:
+    file, job = await seed(db)
+    repo = JobRepository(db)
+    await repo.claim(job.id, [TEST_TYPE])
+    await repo.collection.update_one(
+        {"_id": job.id},
+        {"$set": {"startedAt": utc_now() - timedelta(minutes=2)}},
+    )
+    executed: list[ObjectId] = []
+
+    async def handler(ctx: JobContext) -> None:
+        executed.append(ctx.job.id)
+
+    assert await runner(db, tmp_path, handler).run_job(job.id, recover_stale=True)
+    _, job = await reload(db, file, job)
+    assert executed == [job.id]
+    assert job.status == "completed"
+
+
 async def test_ignores_job_types_without_handler(
     db: AsyncDatabase[Document], tmp_path: Path
 ) -> None:

@@ -1,15 +1,23 @@
 import { Link, useSearchParams } from "react-router";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
-import { categoryById, complaints, isPriority } from "../data/mock";
 import { formatDate } from "../lib/format";
 import { ASSIGN_LABEL } from "../lib/labels";
-import type { AssignStatus, Urgency } from "../types";
+import { useComplaintData } from "../state/complaintData";
+import type { AssignStatus, Complaint, Urgency } from "../types";
 
 const STATUSES: Array<AssignStatus | "all"> = ["all", "auto", "ambiguous", "unassigned", "confirmed"];
 const URGENCIES: Array<Urgency | "all"> = ["all", "긴급", "높음", "보통", "낮음"];
 
+function isPriority(item: Complaint): boolean {
+  return item.attributes.urgency === "긴급"
+    || item.attributes.affected === "어린이"
+    || item.attributes.affected === "노인"
+    || item.attributes.affected === "장애인";
+}
+
 export function ComplaintsPage() {
+  const { complaints, categoryById, loading, error } = useComplaintData();
   const [params, setParams] = useSearchParams();
   const status = params.get("status") ?? "all";
   const urgency = params.get("urgency") ?? "all";
@@ -47,6 +55,8 @@ export function ComplaintsPage() {
         title="민원"
         lede="배정 상태, 긴급도, 카테고리로 대표 민원을 좁힙니다. 번호를 누르면 원문 위치와 속성 6종을 봅니다."
       />
+      {loading ? <p className="notice">민원 데이터를 불러오는 중입니다.</p> : null}
+      {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
       <div className="filter-bar">
         {categoryName ? (
           <button type="button" className="chip-btn is-active" onClick={() => update({ category: "" })}>

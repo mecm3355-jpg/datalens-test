@@ -74,5 +74,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.vercel]
+entrypoint = "app.vercel:app"
+
 [[tool.vercel.subscribers]]
 entrypoint = "app.vercel_tasks"

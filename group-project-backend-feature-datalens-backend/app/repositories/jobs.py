@@ -1,6 +1,6 @@
 import os
 from collections.abc import Collection
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING, IndexModel, ReturnDocument
@@ -83,14 +83,57 @@ class JobRepository(BaseRepository[JobDocument]):
         )
         return None if raw is None else JobDocument.model_validate(raw)
 
-    async def claim(self, job_id: ObjectId, types: Collection[str]) -> JobDocument | None:
-        """특정 queued 작업을 원자적으로 processing으로 바꿔 가져간다."""
+    async def claim(
+        self, job_id: ObjectId, types: Collection[str], *, recover_stale: bool = False
+    ) -> JobDocument | None:
+        """특정 작업을 원자적으로 선점한다.
+
+        Queue 재전달에서는 이전 Function이 비정상 종료해 processing에 남긴 작업도 복구한다.
+        정상 중복 전달이 동시에 실행되지 않도록 시작 후 30초가 지난 작업만 복구한다.
+        """
+        status_filter: dict[str, object] | str = "queued"
+        if recover_stale:
+            status_filter = {
+                "$in": ["queued", "processing"],
+            }
+        query: dict[str, object] = {
+            "_id": job_id,
+            "status": status_filter,
+            "type": {"$in": list(types)},
+        }
+        if recover_stale:
+            query["$or"] = [
+                {"status": "queued"},
+                {
+                    "status": "processing",
+                    "startedAt": {"$lt": utc_now() - timedelta(seconds=30)},
+                },
+            ]
+            query.pop("status")
         raw = await self.collection.find_one_and_update(
-            {"_id": job_id, "status": "queued", "type": {"$in": list(types)}},
-            {"$set": {"status": "processing", "stage": "started", "startedAt": utc_now()}},
+            query,
+            {
+                "$set": {"status": "processing", "stage": "started", "startedAt": utc_now()},
+                "$unset": {"error": "", "completedAt": ""},
+            },
             return_document=ReturnDocument.AFTER,
         )
         return None if raw is None else JobDocument.model_validate(raw)
+
+    async def requeue_for_retry(self, job_id: ObjectId, error: JobError) -> bool:
+        """Queue가 다시 전달할 수 있도록 실패한 실행을 queued로 되돌린다."""
+        result = await self.collection.update_one(
+            {"_id": job_id, "status": "processing"},
+            {
+                "$set": {
+                    "status": "queued",
+                    "stage": "retry_waiting",
+                    "error": error.to_document(),
+                },
+                "$unset": {"startedAt": "", "completedAt": ""},
+            },
+        )
+        return result.modified_count == 1
 
     async def has_active(self, file_id: ObjectId) -> bool:
         """한 파일에 아직 끝나지 않은(queued·processing) 작업이 있는지 본다.

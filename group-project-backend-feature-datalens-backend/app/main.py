@@ -1,11 +1,15 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response
 
-from app.api import complaints, dashboard, files, health, jobs
+from app.api import auth, complaints, dashboard, files, health, jobs
 from app.api.error_handlers import register_error_handlers
+from app.core.auth import COOKIE_NAME, valid_session_token
 from app.core.config import Settings, get_settings
 from app.core.database import Mongo, set_mongo
 from app.repositories.indexes import ensure_indexes
@@ -42,14 +46,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=resolved.app_name, lifespan=lifespan)
     # 라우터 의존성(get_app_settings)이 같은 설정 객체를 쓰도록 앱 상태에 보관한다
     app.state.settings = resolved
+
+    @app.middleware("http")
+    async def require_session(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        protected = request.url.path.startswith("/api/v1/") and not request.url.path.startswith(
+            "/api/v1/auth/"
+        )
+        if resolved.auth_required and protected:
+            token = request.cookies.get(COOKIE_NAME)
+            if not valid_session_token(token, resolved):
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "success": False,
+                        "data": None,
+                        "error": {"code": "AUTH_REQUIRED", "message": "로그인이 필요합니다."},
+                    },
+                )
+        return await call_next(request)
+
     origins = resolved.allowed_cors_origins()
     if origins:
-        # 인증 쿠키를 쓰지 않는 MVP이므로 credentials는 끈다. 와일드카드와 자격 증명을
-        # 함께 허용하는 위험한 구성을 피하고, 환경 변수에 적은 출처만 명시적으로 연다.
+        # 인증을 켠 경우에만 쿠키 전달을 허용한다. 와일드카드와 자격 증명을 함께 허용하는
+        # 위험한 구성을 피하고, 환경 변수에 적은 출처만 명시적으로 연다.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
-            allow_credentials=False,
+            allow_credentials=resolved.auth_required,
             allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
             allow_headers=["Accept", "Content-Type"],
         )
@@ -57,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_error_handlers(app)
     # 헬스 체크는 버전과 무관하게 /health에 두고, 업무 API만 /api/v1 아래에 둔다
     app.include_router(health.router)
+    app.include_router(auth.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(jobs.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")

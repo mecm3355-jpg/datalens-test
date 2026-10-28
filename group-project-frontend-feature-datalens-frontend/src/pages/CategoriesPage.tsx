@@ -5,14 +5,27 @@ import { CategoryTabs } from "../components/CategoryTabs";
 import { DataTable } from "../components/DataTable";
 import { Delta } from "../components/Delta";
 import { PageIntro } from "../components/PageIntro";
-import { categories, categoryById, groupedCategories, TAXONOMY_VERSION } from "../data/mock";
 import { formatDate, formatNumber } from "../lib/format";
 import { useWorkspace } from "../state/workspace";
+import { useComplaintData } from "../state/complaintData";
+import type { Category } from "../types";
+
+function groupCategories(categories: Category[]) {
+  const groups = new Map<string, Category[]>();
+  categories.forEach((category) => groups.set(category.group, [...(groups.get(category.group) ?? []), category]));
+  return [...groups.entries()].map(([group, items]) => ({
+    group,
+    categories: items,
+    count: items.reduce((sum, item) => sum + item.count, 0),
+    previousCount: items.reduce((sum, item) => sum + item.previousCount, 0),
+  }));
+}
 
 export function CategoriesPage() {
-  const groups = groupedCategories();
+  const { categories, categoryById, taxonomyVersion, loading, error } = useComplaintData();
+  const groups = groupCategories(categories);
   const [openGroup, setOpenGroup] = useState<string | null>(groups[0]?.group ?? null);
-  const { mappings, addMapping } = useWorkspace();
+  const { mappings, addMapping, dataMode } = useWorkspace();
   const [mergeFrom, setMergeFrom] = useState(categories[0]?.categoryId ?? "");
   const [mergeTo, setMergeTo] = useState(categories[1]?.categoryId ?? "");
   const [mergeReason, setMergeReason] = useState("");
@@ -37,8 +50,8 @@ export function CategoriesPage() {
       toCategoryId: to.categoryId,
       fromName: from.name,
       toName: to.name,
-      fromVersion: TAXONOMY_VERSION,
-      toVersion: TAXONOMY_VERSION + 1,
+      fromVersion: taxonomyVersion,
+      toVersion: taxonomyVersion + 1,
       reason: mergeReason.trim() || null,
     });
     setMergeReason("");
@@ -59,8 +72,8 @@ export function CategoriesPage() {
       toCategoryId: "발급 전",
       fromName: from.name,
       toName: name,
-      fromVersion: TAXONOMY_VERSION,
-      toVersion: TAXONOMY_VERSION + 1,
+      fromVersion: taxonomyVersion,
+      toVersion: taxonomyVersion + 1,
       reason: splitReason.trim() || null,
     });
     setSplitName("");
@@ -71,10 +84,12 @@ export function CategoriesPage() {
   return (
     <div className="page">
       <PageIntro
-        eyebrow={`체계 v${TAXONOMY_VERSION}`}
+        eyebrow={`체계 v${taxonomyVersion}`}
         title="카테고리"
         lede={`활성 ${formatNumber(categories.length)}개 · 상위 그룹 ${formatNumber(groups.length)}개. 분기마다 겹치는 범주는 합치고, 너무 커진 범주는 나눕니다.`}
       />
+      {loading ? <p className="notice">카테고리 체계를 불러오는 중입니다.</p> : null}
+      {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
       <CategoryTabs />
       <section className="layout-main-side">
         <article className="card card-scroll">
@@ -125,17 +140,17 @@ export function CategoriesPage() {
             })}
           </div>
         </article>
-        <div className="stack">
+        {dataMode === "demo" ? <div className="stack">
           <form className="card" onSubmit={onMerge}>
             <h2 className="title-sm">병합</h2>
             <div className="form-grid form-stack notice">
               <label className="field">
                 <span>합칠 카테고리</span>
-                <CategorySelect value={mergeFrom} onChange={setMergeFrom} />
+                <CategorySelect categories={categories} value={mergeFrom} onChange={setMergeFrom} />
               </label>
               <label className="field">
                 <span>남길 카테고리</span>
-                <CategorySelect value={mergeTo} onChange={setMergeTo} />
+                <CategorySelect categories={categories} value={mergeTo} onChange={setMergeTo} />
               </label>
               <label className="field">
                 <span>사유</span>
@@ -152,7 +167,7 @@ export function CategoriesPage() {
             <div className="form-grid form-stack notice">
               <label className="field">
                 <span>나눌 카테고리</span>
-                <CategorySelect value={splitFrom} onChange={setSplitFrom} />
+                <CategorySelect categories={categories} value={splitFrom} onChange={setSplitFrom} />
               </label>
               <label className="field">
                 <span>새 이름</span>
@@ -170,7 +185,12 @@ export function CategoriesPage() {
               </Button>
             </div>
           </form>
-        </div>
+        </div> : (
+          <article className="card">
+            <h2 className="title-sm">카테고리 변경</h2>
+            <p className="notice">운영 API에 확정된 병합·분할 명세가 없어 변경 입력은 비활성화했습니다. 현재 체계와 승인된 신규 후보만 서버 데이터로 표시합니다.</p>
+          </article>
+        )}
       </section>
       <article className="card">
         <div className="card-head">
@@ -200,7 +220,7 @@ export function CategoriesPage() {
   );
 }
 
-function CategorySelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function CategorySelect({ categories, value, onChange }: { categories: Category[]; value: string; onChange: (value: string) => void }) {
   return (
     <select className="select" value={value} onChange={(event) => onChange(event.target.value)}>
       {categories.map((category) => (

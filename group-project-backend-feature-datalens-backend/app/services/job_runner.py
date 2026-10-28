@@ -89,18 +89,28 @@ class JobRunner:
         await self._execute(job)
         return True
 
-    async def run_job(self, job_id: ObjectId) -> bool:
-        """Queue 메시지가 지정한 대기 작업을 원자적으로 선점해 실행한다."""
+    async def run_job(
+        self,
+        job_id: ObjectId,
+        *,
+        recover_stale: bool = False,
+        retry_unexpected: bool = False,
+    ) -> bool:
+        """Queue 메시지가 지정한 작업을 선점해 실행한다.
+
+        재전달에서는 중단된 processing 작업을 복구하고, 남은 시도가 있으면 예상하지 못한
+        오류를 queued로 되돌린 뒤 다시 올려 Queue 재시도를 실제로 작동시킨다.
+        """
         if not self._handlers:
             return False
-        job = await self._jobs.claim(job_id, self._handlers.keys())
+        job = await self._jobs.claim(job_id, self._handlers.keys(), recover_stale=recover_stale)
         if job is None:
             # 중복 전달되었거나 이미 끝난 작업은 성공적으로 소비한 것으로 본다.
             return False
-        await self._execute(job)
+        await self._execute(job, retry_unexpected=retry_unexpected)
         return True
 
-    async def _execute(self, job: JobDocument) -> None:
+    async def _execute(self, job: JobDocument, *, retry_unexpected: bool = False) -> None:
         """가져온 작업 하나를 실행하고 결과에 따라 작업·파일 상태를 기록한다.
 
         파라미터:
@@ -128,13 +138,13 @@ class JobRunner:
         try:
             await self._handlers[job.type](context)
         except asyncio.CancelledError:
-            # 워커 종료로 끊긴 작업은 실패로 남겨 다시 처리할 수 있게 한다
             error = JobError(
                 code="WORKER_STOPPED", message="워커가 종료되어 작업이 중단되었습니다."
             )
-            # shield: 취소 중에도 실패 기록 DB 호출만은 끝까지 가게 한다.
-            # 그 뒤 다시 올려 워커 종료 흐름(취소 전파)을 막지 않는다
-            await asyncio.shield(self._fail(job, error))
+            if retry_unexpected:
+                await asyncio.shield(self._retry(job, error))
+            else:
+                await asyncio.shield(self._fail(job, error))
             raise
         except AppError as exc:
             # 처리기가 의도한 오류: 코드·메시지를 그대로 사용자에게 보여 줄 수 있다
@@ -143,9 +153,11 @@ class JobRunner:
             # 예상 못 한 오류: 내부 정보가 새지 않게 메시지는 일반 문구로 두고, 자세한 내용은
             # 스택과 함께 서버 로그에만 남긴다. 예외를 삼켜 워커가 다음 작업을 계속 하게 한다
             logger.exception("작업 실행 실패: job=%s type=%s", job.id, job.type)
-            await self._fail(
-                job, JobError(code="INTERNAL_ERROR", message="작업 처리 중 오류가 발생했습니다.")
-            )
+            error = JobError(code="INTERNAL_ERROR", message="작업 처리 중 오류가 발생했습니다.")
+            if retry_unexpected:
+                await self._retry(job, error)
+                raise
+            await self._fail(job, error)
         else:
             # 처리 중에 시간 초과로 이미 실패 처리됐다면 완료로 덮어쓰지 않으며,
             # 파일 상태도 그대로 둔다
@@ -163,6 +175,11 @@ class JobRunner:
         # 끝난 작업이면 파일 상태를 두 번 건드리지 않는다
         if await self._jobs.mark_failed(job.id, error):
             await self._files.update_status(job.field, "failed")
+
+    async def _retry(self, job: JobDocument, error: JobError) -> None:
+        """현재 실행을 재시도 대기로 되돌리고 파일 상태도 queued로 맞춘다."""
+        if await self._jobs.requeue_for_retry(job.id, error):
+            await self._files.update_status(job.field, "queued", last_job_id=job.id)
 
     async def fail_stale_jobs(self) -> int:
         """제한 시간(job_timeout_seconds)을 넘겨 processing에 남은 작업을 실패 처리한다.

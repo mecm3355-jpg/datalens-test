@@ -4,8 +4,10 @@ import { datalensApi, type ApiDashboardSummary, type ApiJob } from "../api/datal
 import { cleanRuleKey, toArtifact, toDataFile } from "../features/files/apiAdapters";
 import type { CleaningRule, DataFile, DemoCleaningArtifact } from "../types";
 
-const POLL_INTERVAL_MS = 800;
-const MAX_POLL_ATTEMPTS = 150;
+const POLL_INTERVAL_MS = 1_500;
+const MAX_POLL_ATTEMPTS = 1_200;
+
+export type UploadResult = { id: string; success: boolean; error?: string };
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -30,22 +32,25 @@ function saveBlob(blob: Blob, filename: string): void {
 export type ApiWorkspace = {
   files: DataFile[];
   artifacts: Record<string, DemoCleaningArtifact>;
+  jobsByFile: Record<string, ApiJob>;
   appliedCleaning: Record<string, string[]>;
   loading: boolean;
   error: string | null;
   dashboard: ApiDashboardSummary | null;
-  addFiles: (files: File[]) => Promise<string[]>;
+  addFiles: (files: File[]) => Promise<UploadResult[]>;
   retryFileProcessing: (fileId: string) => Promise<boolean>;
   requestAnalysis: (fileId: string) => Promise<void>;
   ensureFileData: (fileId: string) => Promise<void>;
   applyCleaningRules: (fileId: string, rules: CleaningRule[]) => Promise<void>;
   downloadCleanedFile: (file: DataFile, format: "csv" | "json") => Promise<void>;
+  deleteFile: (fileId: string) => Promise<void>;
 };
 
 /** FastAPI 파일·작업·정제 API를 화면 상태로 연결합니다. */
 export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   const [files, setFiles] = useState<DataFile[]>([]);
   const [artifacts, setArtifacts] = useState<Record<string, DemoCleaningArtifact>>({});
+  const [jobsByFile, setJobsByFile] = useState<Record<string, ApiJob>>({});
   const [appliedCleaning, setAppliedCleaning] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +71,15 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   const ensureFileData = useCallback(async (fileId: string) => {
     try {
       const serverFile = await datalensApi.getFile(fileId);
+      if (serverFile.lastJobId) {
+        const latestJob = await datalensApi.job(serverFile.lastJobId);
+        setJobsByFile((current) => ({ ...current, [fileId]: latestJob }));
+        if (latestJob.error) {
+          patchFile(fileId, {
+            processingError: `${latestJob.error.code}: ${latestJob.error.message}`,
+          });
+        }
+      }
       if (serverFile.status !== "completed" || !serverFile.processingCapabilities.qualityCheck) return;
       const [preview, analysis, suggestions, versions] = await Promise.all([
         datalensApi.preview(fileId),
@@ -73,9 +87,12 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         serverFile.category === "tabular" ? datalensApi.suggestions(fileId) : Promise.resolve([]),
         serverFile.category === "tabular" ? datalensApi.versions(fileId) : Promise.resolve([]),
       ]);
-      const artifact = toArtifact(preview, analysis, suggestions);
-      setArtifacts((current) => ({ ...current, [fileId]: artifact }));
       const latestCleaning = versions.find((version) => version.resultType === "cleaning");
+      const cleanedPreview = latestCleaning
+        ? await datalensApi.cleanedPreview(fileId, latestCleaning.version)
+        : null;
+      const artifact = toArtifact(preview, analysis, suggestions, cleanedPreview);
+      setArtifacts((current) => ({ ...current, [fileId]: artifact }));
       const appliedKeys = new Set((latestCleaning?.cleaning?.rules ?? []).map(cleanRuleKey));
       setAppliedCleaning((current) => ({
         ...current,
@@ -101,6 +118,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   const pollJob = useCallback(async (jobId: string, fileId: string): Promise<ApiJob> => {
     for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
       const job = await datalensApi.job(jobId);
+      setJobsByFile((current) => ({ ...current, [fileId]: job }));
       patchFile(fileId, {
         status: job.status,
         uploadProgress: job.progress,
@@ -147,7 +165,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     };
   }, [enabled, patchFile, pollJob, refreshDashboard]);
 
-  const addFiles = useCallback(async (selected: File[]): Promise<string[]> => {
+  const addFiles = useCallback(async (selected: File[]): Promise<UploadResult[]> => {
     const optimistic = selected.map((file) => ({
       id: crypto.randomUUID(),
       originalName: file.name,
@@ -180,14 +198,14 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
               patchFile(serverFile.fileId, { processingError: messageOf(pollError) });
             });
         }
-        return serverFile.fileId;
+        return { id: serverFile.fileId, success: true };
       } catch (uploadError) {
         patchFile(temporaryId, {
           status: "failed",
           uploadProgress: 0,
           processingError: messageOf(uploadError),
         });
-        return temporaryId;
+        return { id: temporaryId, success: false, error: messageOf(uploadError) };
       }
     }));
     return ids;
@@ -225,6 +243,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   return {
     files,
     artifacts,
+    jobsByFile,
     appliedCleaning,
     loading,
     error,
@@ -243,5 +262,16 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     ensureFileData,
     applyCleaningRules,
     downloadCleanedFile,
+    deleteFile: async (fileId: string) => {
+      await datalensApi.deleteFile(fileId);
+      setFiles((current) => current.filter((file) => file.id !== fileId));
+      setArtifacts((current) => Object.fromEntries(
+        Object.entries(current).filter(([id]) => id !== fileId),
+      ));
+      setJobsByFile((current) => Object.fromEntries(
+        Object.entries(current).filter(([id]) => id !== fileId),
+      ));
+      void refreshDashboard();
+    },
   };
 }

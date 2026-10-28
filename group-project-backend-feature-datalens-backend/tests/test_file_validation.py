@@ -5,7 +5,13 @@ import pytest
 
 from app.core.errors import AppError
 from app.services.file_service import file_extension
-from app.services.file_validation import ZipLimits, decode_text_sample, detect_format
+from app.services.file_validation import (
+    ZipLimits,
+    decode_text_sample,
+    detect_format,
+    validate_pdf_page_count,
+)
+from tests.document_files import make_pdf
 
 LIMITS = ZipLimits(max_uncompressed_bytes=10 * 1024 * 1024, max_entries=100)
 
@@ -89,6 +95,14 @@ def test_accepts_valid_files(
         mime,
         category,
     )
+
+
+def test_pdf_page_limit(tmp_path: Path) -> None:
+    path = write(tmp_path, "many.pdf", make_pdf([["one"], ["two"]]))
+    validate_pdf_page_count(path, 2)
+    with pytest.raises(AppError) as caught:
+        validate_pdf_page_count(path, 1)
+    assert caught.value.code == "PDF_PAGE_LIMIT_EXCEEDED"
 
 
 def test_accepts_xlsx_and_docx(tmp_path: Path) -> None:

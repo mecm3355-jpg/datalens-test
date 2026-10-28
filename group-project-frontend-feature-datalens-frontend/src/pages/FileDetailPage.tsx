@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import {
-  complaintsByFile,
   jobByFileId,
   qualityByFile,
   stages,
@@ -12,6 +11,7 @@ import {
 import { formatBytes, formatDate, formatNumber, formatRatio } from "../lib/format";
 import { FILE_STATUS_LABEL, MAPPING_FIELDS, SEVERITY_LABEL } from "../lib/labels";
 import { useWorkspace } from "../state/workspace";
+import { useComplaintData } from "../state/complaintData";
 import type { DataFile, JobStatus, MappingField } from "../types";
 
 type UploadedPreviewRow = {
@@ -25,6 +25,7 @@ export function FileDetailPage() {
 }
 
 function FileDetail({ fileId }: { fileId: string }) {
+  const { complaints } = useComplaintData();
   const {
     files,
     analysisRequested,
@@ -33,9 +34,13 @@ function FileDetail({ fileId }: { fileId: string }) {
     cleaningRows,
     cleaningArtifact,
     ensureFileData,
+    deleteFile,
+    jobForFile,
     dataMode,
   } = useWorkspace();
+  const navigate = useNavigate();
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const file = files.find((item) => item.id === fileId);
   useEffect(() => {
     if (dataMode === "api") void ensureFileData(fileId);
@@ -53,9 +58,9 @@ function FileDetail({ fileId }: { fileId: string }) {
     );
   }
 
-  const job = jobByFileId(file.id);
+  const job = dataMode === "api" ? jobForFile(file.id) : jobByFileId(file.id);
   const requested = analysisRequested(file.id);
-  const preview = complaintsByFile(file.id);
+  const preview = complaints.filter((item) => item.fileId === file.id);
   const uploadedPreview = cleaningRows(file.id).slice(0, 10).map((values, index) => ({
     id: `uploaded-${index}`,
     values,
@@ -73,6 +78,18 @@ function FileDetail({ fileId }: { fileId: string }) {
       return;
     }
     setRetryError("원본 파일이 현재 브라우저 세션에 없습니다. 파일 목록에서 원본을 다시 선택해 주세요.");
+  };
+
+  const removeFile = async () => {
+    if (!window.confirm(`'${file.originalName}' 파일과 관련 결과를 모두 삭제할까요?`)) return;
+    setIsDeleting(true);
+    try {
+      await deleteFile(file.id);
+      navigate("/files", { replace: true });
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "파일을 삭제하지 못했습니다.");
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -99,6 +116,9 @@ function FileDetail({ fileId }: { fileId: string }) {
               disabled={file.status === "processing"}
             >
               {file.status === "processing" ? "처리 중" : job?.status === "completed" ? "다시 분석" : file.status === "failed" ? "다시 시도" : "분석 실행"}
+            </Button>
+            <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting || file.status === "processing"}>
+              {isDeleting ? "삭제 중" : "파일 삭제"}
             </Button>
           </>
         }
@@ -179,7 +199,7 @@ function FileDetail({ fileId }: { fileId: string }) {
       {analysis && (analysis.numericSummaries.length > 0 || analysis.frequencies.length > 0 || analysis.textStats || analysis.imageMetadata) ? (
         <section className="split">
           <article className="card">
-            <div className="card-head"><h2 className="title-sm">계산 통계</h2><span className="pill">브라우저 계산</span></div>
+            <div className="card-head"><h2 className="title-sm">계산 통계</h2><span className="pill">서버 계산</span></div>
             {analysis.numericSummaries.length > 0 ? (
               <DataTable
                 framed={false}

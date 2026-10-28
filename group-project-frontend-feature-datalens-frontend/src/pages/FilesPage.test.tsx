@@ -18,7 +18,8 @@ describe("FilesPage", () => {
     );
 
     expect(screen.getByRole("heading", { name: "파일" })).toBeInTheDocument();
-    expect(screen.getByText(/CSV, JSON, TXT, LOG, JPG, PNG/)).toBeInTheDocument();
+    expect(screen.getByText(/CSV, JSON, TXT, LOG/)).toBeInTheDocument();
+    expect(screen.getByText(/JPG, PNG/)).toBeInTheDocument();
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     expect(input?.multiple).toBe(true);

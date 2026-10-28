@@ -10,7 +10,7 @@ import {
 import { inspectDemoFile } from "../lib/demoProcessing";
 import { AppError } from "../api/AppError";
 import type { ApiDashboardSummary } from "../api/datalens";
-import { useApiWorkspace } from "../hooks/useApiWorkspace";
+import { useApiWorkspace, type UploadResult } from "../hooks/useApiWorkspace";
 import type {
   CandidateDecision,
   CleaningDecision,
@@ -19,6 +19,7 @@ import type {
   DataFile,
   DemoCleaningArtifact,
   FileCategory,
+  Job,
   Mapping,
   ReviewItem,
 } from "../types";
@@ -44,7 +45,7 @@ type WorkspaceValue = {
   workspaceError: string | null;
   dashboardSummary: ApiDashboardSummary | null;
   files: DataFile[];
-  addFiles: (list: File[]) => Promise<string[]>;
+  addFiles: (list: File[]) => Promise<UploadResult[]>;
   retryFileProcessing: (fileId: string) => Promise<boolean>;
   ensureFileData: (fileId: string) => Promise<void>;
   candidateDecision: (id: string) => CandidateDecision;
@@ -65,6 +66,8 @@ type WorkspaceValue = {
   appliedCleaningRules: (fileId: string) => string[] | null;
   applyCleaningRules: (fileId: string, ruleIds: string[]) => Promise<void>;
   downloadCleanedFile: (file: DataFile, format: "csv" | "json") => Promise<void>;
+  deleteFile: (fileId: string) => Promise<void>;
+  jobForFile: (fileId: string) => Job | null;
 };
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
@@ -208,7 +211,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           fileHandles.current.set(dataFile.id, original);
           void processFile(dataFile.id, original, index * 120);
         });
-        return next.map((file) => file.id);
+        return next.map((file) => ({ id: file.id, success: true }));
       },
       retryFileProcessing: async (fileId) => {
         if (DATA_MODE === "api") return api.retryFileProcessing(fileId);
@@ -255,7 +258,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (DATA_MODE === "api") return api.requestAnalysis(fileId);
         setRequested((current) => ({ ...current, [fileId]: true }));
       },
-      cleaningDecision: (fileId, ruleId) => cleaningDecisions[`${fileId}:${ruleId}`] ?? "pending",
+      cleaningDecision: (fileId, ruleId) => cleaningDecisions[`${fileId}:${ruleId}`]
+        ?? (DATA_MODE === "api" && api.appliedCleaning[fileId]?.includes(ruleId)
+          ? "approved"
+          : "pending"),
       decideCleaningRule: (fileId, ruleId, decision) => {
         setCleaningDecisions((current) => ({
           ...current,
@@ -279,6 +285,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       downloadCleanedFile: (file, format) => DATA_MODE === "api"
         ? api.downloadCleanedFile(file, format)
         : Promise.reject(new AppError("DEMO_DOWNLOAD", "데모 다운로드는 화면에서 생성합니다.")),
+      deleteFile: async (fileId) => {
+        if (DATA_MODE === "api") return api.deleteFile(fileId);
+        setExtraFiles((current) => current.filter((file) => file.id !== fileId));
+      },
+      jobForFile: (fileId) => {
+        if (DATA_MODE !== "api") return null;
+        const job = api.jobsByFile[fileId];
+        return job
+          ? {
+              id: job.jobId,
+              fileId: job.fileId,
+              type: job.type,
+              status: job.status,
+              progress: job.progress,
+              stage: job.stage,
+              error: job.error,
+            }
+          : null;
+      },
     }),
     [
       api,

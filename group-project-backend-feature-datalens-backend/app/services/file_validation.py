@@ -393,3 +393,20 @@ def detect_format(path: Path, extension: str, limits: ZipLimits) -> DetectedForm
         _check_ole_macro(path, extension)
 
     return DetectedFormat(extension=extension, mime_type=spec.mime_type, category=spec.category)
+
+
+def validate_pdf_page_count(path: Path, max_pages: int) -> None:
+    """PDF 구조를 열어 손상 여부와 최대 페이지 수를 확인한다."""
+    import pdfplumber
+
+    try:
+        with pdfplumber.open(path) as pdf:
+            page_count = len(pdf.pages)
+    except Exception as exc:
+        raise _invalid("pdf", "문서 구조를 읽을 수 없습니다.") from exc
+    if page_count > max_pages:
+        raise AppError(
+            "PDF_PAGE_LIMIT_EXCEEDED",
+            f"PDF는 최대 {max_pages}페이지까지 업로드할 수 있습니다.",
+            413,
+        )

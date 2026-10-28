@@ -64,8 +64,18 @@ export function FilesPage() {
     }
 
     if (accepted.length > 0) {
-      const addedIds = await addFiles(accepted);
-      setRecentUploadIds(addedIds);
+      const results = await addFiles(accepted);
+      setRecentUploadIds(results.map((result) => result.id));
+      const failed = results.filter((result) => !result.success);
+      if (failed.length > 0) {
+        setUploadFeedback({
+          tone: "error",
+          message: `${results.length - failed.length}개 업로드 성공 · ${failed.length}개 실패. ${failed
+            .map((result) => result.error ?? "알 수 없는 오류")
+            .join(" · ")}`,
+        });
+        return;
+      }
     }
     if (rejected.length > 0) {
       setUploadFeedback({

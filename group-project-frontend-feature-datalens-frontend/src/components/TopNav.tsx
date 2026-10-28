@@ -40,7 +40,7 @@ export function TopNav() {
         </nav>
         <div className="nav-tools">
           {loggedIn ? (
-            <button type="button" className="btn btn-nav-logout" onClick={logout}>
+            <button type="button" className="btn btn-nav-logout" onClick={() => void logout()}>
               로그아웃
             </button>
           ) : (

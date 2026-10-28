@@ -2,7 +2,7 @@
 
 from bson import ObjectId
 from pydantic import BaseModel
-from vercel.queue import subscribe
+from vercel.queue import Message, subscribe
 
 from app.core.config import get_settings
 from app.core.database import Mongo
@@ -18,12 +18,17 @@ class JobMessage(BaseModel):
 
 
 @subscribe(topic="datalens-jobs", consumer_group="datalens-worker", max_attempts=3)
-async def process_job(message: JobMessage) -> None:
+async def process_job(message: Message[JobMessage]) -> None:
     """메시지의 queued 작업 하나를 선점해 기존 작업 처리기로 실행한다."""
     settings = get_settings()
     mongo = Mongo(settings.mongodb_uri, settings.mongodb_db_name)
     try:
         await ensure_indexes(mongo.db)
-        await JobRunner(mongo.db, settings, HANDLERS).run_job(ObjectId(message.job_id))
+        delivery_count = message.metadata.delivery_count
+        await JobRunner(mongo.db, settings, HANDLERS).run_job(
+            ObjectId(message.payload.job_id),
+            recover_stale=delivery_count > 1,
+            retry_unexpected=delivery_count < 3,
+        )
     finally:
         await mongo.close()

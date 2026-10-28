@@ -2,10 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
-      "source": "/api/blob-upload",
-      "destination": "/api/blob-upload"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

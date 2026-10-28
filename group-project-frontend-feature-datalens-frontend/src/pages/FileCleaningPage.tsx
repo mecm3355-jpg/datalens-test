@@ -8,10 +8,30 @@ import { applyDemoCleaning } from "../lib/demoProcessing";
 import { downloadText, toCsv } from "../lib/download";
 import { formatNumber } from "../lib/format";
 import { useWorkspace } from "../state/workspace";
+import type { CleaningPreviewRow } from "../types";
 
 function sameRuleSelection(left: string[] | null, right: Set<string>): boolean {
   if (!left || left.length !== right.size) return false;
   return left.every((ruleId) => right.has(ruleId));
+}
+
+function actualComparisonRows(
+  original: Array<Record<string, string>>,
+  cleaned: Array<Record<string, string>>,
+): CleaningPreviewRow[] {
+  const length = Math.max(original.length, cleaned.length);
+  return Array.from({ length }, (_, index) => {
+    const before = original[index] ? JSON.stringify(original[index]) : "(행 없음)";
+    const after = cleaned[index] ? JSON.stringify(cleaned[index]) : "제외됨";
+    return {
+      id: `actual-${index}`,
+      row: index + 2,
+      field: "전체 행",
+      before,
+      after,
+      ruleId: "applied-result",
+    };
+  });
 }
 
 export function FileCleaningPage() {
@@ -146,13 +166,12 @@ export function FileCleaningPage() {
   };
 
   const activeRuleIds = isApplied && appliedRuleIds ? new Set(appliedRuleIds) : selectedRuleIds;
-  const comparisonRows = preview.map((row) => {
-    const selected = activeRuleIds.has(row.ruleId);
-    return {
-      ...row,
-      selected,
-      effectiveAfter: selected ? row.after : row.before,
-    };
+  const actualRows = isApplied && artifact?.cleanedRows
+    ? actualComparisonRows(artifact.rows, artifact.cleanedRows)
+    : null;
+  const comparisonRows = (actualRows ?? preview).map((row) => {
+    const selected = actualRows !== null || activeRuleIds.has(row.ruleId);
+    return { ...row, selected, effectiveAfter: selected ? row.after : row.before };
   });
   const changedComparisonRows = comparisonRows.filter((row) => row.before !== row.effectiveAfter);
   const visibleRows = showChangedOnly ? changedComparisonRows : comparisonRows;
@@ -289,7 +308,7 @@ export function FileCleaningPage() {
           <div>
             <h2 className="title-sm" id="comparison-title">{isApplied ? "정제 전·후 결과" : "예상 정제 결과"}</h2>
             <p className="caption">
-              변경 {formatNumber(changedComparisonRows.length)}개 · 전체 비교 {formatNumber(comparisonRows.length)}개
+              {actualRows ? "실제 정제 산출물(행 위치 기준)" : "규칙 적용 예상값"} · 변경 {formatNumber(changedComparisonRows.length)}개 · 전체 비교 {formatNumber(comparisonRows.length)}개
             </p>
           </div>
           <button

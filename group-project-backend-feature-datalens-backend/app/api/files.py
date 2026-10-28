@@ -302,6 +302,16 @@ async def list_versions(
     return ok(VersionList(file_id=file_id, items=[VersionItem.from_document(r) for r in results]))
 
 
+@router.get("/{file_id}/cleaned-preview", response_model=ApiResponse[FilePreview])
+async def preview_cleaned_file(
+    service: Cleaning,
+    file_id: str,
+    version: Annotated[int | None, Query(ge=1)] = None,
+) -> ApiResponse[FilePreview]:
+    """실제 정제 산출물의 앞부분을 조회한다. version을 생략하면 최신 결과를 사용한다."""
+    return ok(await service.cleaned_preview(file_id, version))
+
+
 @router.get("/{file_id}/export", response_class=FileResponse)
 async def export_file(
     service: Cleaning,

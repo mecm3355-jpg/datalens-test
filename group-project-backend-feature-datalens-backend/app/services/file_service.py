@@ -19,7 +19,13 @@ from app.schemas.mongo import utc_now
 from app.schemas.preview_api import FilePreview
 from app.schemas.result import ResultDocument
 from app.services.artifacts import job_dir_key, results_dir_key
-from app.services.file_validation import CAPABILITIES, DetectedFormat, ZipLimits, detect_format
+from app.services.file_validation import (
+    CAPABILITIES,
+    DetectedFormat,
+    ZipLimits,
+    detect_format,
+    validate_pdf_page_count,
+)
 from app.services.ocr_setup import ocr_options
 from app.services.preview import build_preview
 from app.services.storage import LocalStorage, VercelBlobStorage
@@ -218,6 +224,8 @@ class FileService:
             )
             # 확장자만 믿지 않고 실제 내용(시그니처·구조)으로 형식을 확인한다(CLAUDE.md 업로드 주의)
             detected = await asyncio.to_thread(detect_format, temp, extension, limits)
+            if detected.extension == "pdf":
+                await asyncio.to_thread(validate_pdf_page_count, temp, self._settings.max_pdf_pages)
 
             now = utc_now()
             # 연·월 폴더로 나눠 한 폴더에 파일이 몰리지 않게 한다. 원래 이름을 쓰지 않으므로
@@ -269,6 +277,8 @@ class FileService:
                 )
             path = await asyncio.to_thread(self._storage.path, pathname)
             detected = await asyncio.to_thread(detect_format, path, extension, limits)
+            if detected.extension == "pdf":
+                await asyncio.to_thread(validate_pdf_page_count, path, self._settings.max_pdf_pages)
             return await self._register_stored_file(name, detected, size, pathname)
         except Exception:
             # 토큰 발급 뒤 검증에 실패한 Blob을 남겨 저장 공간이 쌓이지 않게 한다.

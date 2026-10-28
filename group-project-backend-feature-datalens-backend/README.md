@@ -23,6 +23,11 @@ MONGODB_URI=mongodb+srv://...
 MONGODB_DB_NAME=datalens
 CORS_ORIGINS=http://localhost:5173,https://datalenstest.vercel.app
 MAX_UPLOAD_BYTES=104857600
+MAX_PDF_PAGES=500
+AUTH_REQUIRED=false
+AUTH_PASSWORD=change-me
+AUTH_SECRET=replace-with-a-long-random-secret
+AUTH_COOKIE_SECURE=false
 ```
 
 Azure OpenAI 키와 배포 이름은 AI 리포트를 사용할 때만 백엔드 환경에 추가한다. 프런트엔드 `VITE_*` 변수에는 비밀값을 넣지 않는다.

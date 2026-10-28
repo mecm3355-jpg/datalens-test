@@ -3,6 +3,16 @@
 > 원본: `docs/api-spec/api_명세서.hwpx`. 이 파일은 원본을 **그대로** 옮긴 Markdown 변환본이다. 원본이 바뀌면 이 파일도 함께 고친다.
 > 경로·기능·예시를 임의로 바꾸지 않는다. 명세서에 없는 API(민원 전용 등)는 `docs/prd/PRD.md` 7.5의 "명세서 외 추가 제안"이며 확정 전이다.
 
+## 선택적 세션 인증 API
+
+`AUTH_REQUIRED=true`인 배포에서만 파일·민원 API가 세션 쿠키를 요구한다. 비밀번호와 서명 키는 서버 환경 변수로만 관리한다.
+
+| Method | Endpoint | 기능 |
+| --- | --- | --- |
+| POST | /api/v1/auth/login | 배포 비밀번호 검증 후 HttpOnly 세션 발급 |
+| GET | /api/v1/auth/session | 현재 세션 확인 |
+| POST | /api/v1/auth/logout | 세션 쿠키 제거 |
+
 ## 파일 관리 API
 
 | Method | Endpoint | 기능 |
@@ -12,6 +22,7 @@
 | GET | /api/v1/files/{file_id} | 파일 상세 조회 |
 | DELETE | /api/v1/files/{file_id} | 파일 및 관련 결과 삭제 |
 | GET | /api/v1/files/{file_id}/preview | 원본 데이터 미리보기 |
+| GET | /api/v1/files/{file_id}/cleaned-preview?version={version} | 실제 정제 산출물 미리보기 |
 
 ※ 업로드 요청 : multipart/form-data
 

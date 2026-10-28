@@ -1,13 +1,11 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { useSession } from "../state/session";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^01[016789]\d{7,8}$/;
 
 export function SignupPage() {
   const navigate = useNavigate();
-  const { login } = useSession();
   const [account, setAccount] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [accountError, setAccountError] = useState("");
@@ -20,8 +18,7 @@ export function SignupPage() {
     setAccountError(nextAccountError);
     setTermsError(nextTermsError);
     if (nextAccountError || nextTermsError) return;
-    login();
-    navigate("/");
+    navigate("/login");
   }
 
   return (
