@@ -78,6 +78,13 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   const ensureFileData = useCallback(async (fileId: string) => {
     try {
       const serverFile = await datalensApi.getFile(fileId);
+      const resolvedFile = toDataFile(serverFile);
+      setFiles((current) => {
+        const exists = current.some((file) => file.id === fileId);
+        return exists
+          ? current.map((file) => (file.id === fileId ? resolvedFile : file))
+          : [resolvedFile, ...current];
+      });
       if (serverFile.lastJobId) {
         const latestJob = await datalensApi.job(serverFile.lastJobId);
         setJobsByFile((current) => ({ ...current, [fileId]: latestJob }));

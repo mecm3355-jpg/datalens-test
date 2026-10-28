@@ -49,15 +49,29 @@ export function FileCleaningPage() {
     downloadCleanedFile,
     ensureFileData,
     dataMode,
+    loading,
   } = useWorkspace();
   const file = files.find((item) => item.id === fileId);
   const [showChangedOnly, setShowChangedOnly] = useState(true);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isApplying, setIsApplying] = useState(false);
+  const [isResolvingFile, setIsResolvingFile] = useState(dataMode === "api");
 
   useEffect(() => {
-    if (dataMode === "api") void ensureFileData(fileId);
-    // Load once per route; provider state updates should not repeat network requests.
+    if (dataMode !== "api") {
+      setIsResolvingFile(false);
+      return;
+    }
+
+    let active = true;
+    setIsResolvingFile(true);
+    void ensureFileData(fileId).finally(() => {
+      if (active) setIsResolvingFile(false);
+    });
+    return () => {
+      active = false;
+    };
+    // fileId is the loading boundary; provider state updates must not retrigger the request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataMode, fileId]);
 
@@ -79,6 +93,14 @@ export function FileCleaningPage() {
   const notSelectedCount = rules.length - selectedCount;
   const allSelectableRulesSelected = rules.some((rule) => rule.affectedRows > 0)
     && rules.filter((rule) => rule.affectedRows > 0).every((rule) => selectedRuleIds.has(rule.id));
+
+  if (!file && (loading || isResolvingFile)) {
+    return (
+      <div className="page">
+        <PageIntro title="정제 정보를 불러오는 중입니다" lede="잠시만 기다려 주세요." />
+      </div>
+    );
+  }
 
   if (!file) {
     return (

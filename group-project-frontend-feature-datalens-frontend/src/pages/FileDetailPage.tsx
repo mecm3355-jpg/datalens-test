@@ -37,16 +37,37 @@ function FileDetail({ fileId }: { fileId: string }) {
     deleteFile,
     jobForFile,
     dataMode,
+    loading,
   } = useWorkspace();
   const navigate = useNavigate();
   const [retryError, setRetryError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isResolvingFile, setIsResolvingFile] = useState(dataMode === "api");
   const file = files.find((item) => item.id === fileId);
   useEffect(() => {
-    if (dataMode === "api") void ensureFileData(fileId);
+    if (dataMode !== "api") {
+      setIsResolvingFile(false);
+      return;
+    }
+
+    let active = true;
+    setIsResolvingFile(true);
+    void ensureFileData(fileId).finally(() => {
+      if (active) setIsResolvingFile(false);
+    });
+    return () => {
+      active = false;
+    };
     // fileId is the loading boundary; provider state updates must not retrigger the request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataMode, fileId]);
+  if (!file && (loading || isResolvingFile)) {
+    return (
+      <div className="page">
+        <PageIntro title="파일 정보를 불러오는 중입니다" lede="잠시만 기다려 주세요." />
+      </div>
+    );
+  }
   if (!file) {
     return (
       <div className="page">

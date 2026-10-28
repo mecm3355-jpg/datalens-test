@@ -1,6 +1,6 @@
 # DataLens 프런트엔드 + 백엔드 Vercel 동시 배포
 
-상위 `group project-merge` 폴더를 Vercel 프로젝트 루트로 배포한다. Vercel Services(Beta)가
+상위 `datalens-test` 폴더를 Vercel 프로젝트 루트로 배포한다. Vercel Services(Beta)가
 Vite 프런트엔드와 FastAPI 백엔드를 각각 빌드한 뒤 하나의 URL·하나의 배포로 묶는다.
 
 ## 최초 1회 설정
@@ -28,7 +28,7 @@ Blob 연결 시 `BLOB_READ_WRITE_TOKEN`이 자동 등록된다. Azure OpenAI 기
 PowerShell에서 두 서비스의 상위 폴더로 이동해 실행한다.
 
 ```powershell
-cd "C:\Users\USER\Desktop\group project-merge"
+cd "C:\Users\USER\Desktop\datalens-test"
 vercel link
 vercel --prod
 ```
@@ -48,7 +48,6 @@ Vercel 전체 구성을 로컬에서 확인할 때는 상위 폴더에서 `verce
 
 ## Git 자동 배포 주의
 
-현재 프런트엔드 폴더 안에만 `.git`이 있으므로 CLI 동시 배포는 가능하지만, Git 연동으로
-두 서비스를 자동 배포하려면 상위 `group project-merge`를 하나의 Git 저장소로 만들고 두
-하위 폴더를 함께 커밋해야 한다. 기존 프런트 Git 이력을 제거하거나 이동하는 작업은 별도
-백업 후 진행한다.
+현재 상위 `datalens-test`가 Git 저장소 루트이며 프런트엔드와 백엔드가 함께 추적된다.
+Vercel 프로젝트를 이 저장소의 `main` 브랜치에 연결하면 두 하위 서비스를 한 배포에서
+자동으로 빌드할 수 있다.
