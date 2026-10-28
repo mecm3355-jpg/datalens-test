@@ -3,6 +3,27 @@ import type { CleaningPreviewRow, CleaningRule, DemoCleaningArtifact } from "../
 const MAX_STORED_ROWS = 1000;
 const TEXT_EXTENSIONS = new Set(["csv", "tsv", "txt"]);
 
+async function readTextFile(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder("utf-8").decode(bytes.subarray(3));
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(bytes.subarray(2));
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder("utf-16be").decode(bytes.subarray(2));
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("euc-kr").decode(bytes);
+  }
+}
+
 function parseDelimited(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -77,7 +98,7 @@ export async function inspectDemoFile(file: File): Promise<DemoCleaningArtifact>
     };
   }
 
-  const text = await file.text();
+  const text = await readTextFile(file);
   const delimiter = extension === "tsv" ? "\t" : extension === "csv" ? "," : "\t";
   const parsed = parseDelimited(text.replace(/^\uFEFF/, ""), delimiter);
   if (parsed.length === 0) throw new Error("파일에서 읽을 수 있는 데이터가 없습니다.");
