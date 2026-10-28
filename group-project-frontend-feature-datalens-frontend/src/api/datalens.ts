@@ -234,7 +234,11 @@ export const datalensApi = {
   },
   async upload(file: File): Promise<{ fileId: string }> {
     if (import.meta.env.VITE_UPLOAD_MODE === "blob") {
-      const safeName = file.name.replace(/[^\p{L}\p{N}._-]/gu, "_").slice(-120) || "upload";
+      // Blob presigned tokens compare the storage pathname byte-for-byte. Keeping
+      // non-ASCII characters here can produce a differently encoded token scope,
+      // so only the internal storage key is normalized to ASCII. The original
+      // filename is still sent separately to the backend and shown in the UI.
+      const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_").slice(-120) || "upload";
       const blob = await uploadToBlob(`incoming/${crypto.randomUUID()}-${safeName}`, file, {
         access: "private",
         handleUploadUrl: "/api/blob-upload",
