@@ -138,6 +138,7 @@ export type DataFile = {
   columns: string[];
   mapping: Partial<Record<string, MappingField>>;
   swappedAxes?: boolean;
+  uploadProgress?: number;
 };
 
 export type Job = {

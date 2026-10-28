@@ -22,6 +22,7 @@ export function FilesPage() {
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [uploadFeedback, setUploadFeedback] = useState<UploadFeedback>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [recentUploadIds, setRecentUploadIds] = useState<string[]>([]);
 
   const filteredFiles = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
@@ -32,6 +33,14 @@ export function FilesPage() {
       return matchesQuery && matchesStatus && matchesCategory;
     });
   }, [category, files, query, status]);
+
+  const recentUploadBatch = useMemo(() => {
+    const filesById = new Map(files.map((file) => [file.id, file]));
+    return recentUploadIds.flatMap((id) => {
+      const file = filesById.get(id);
+      return file ? [file] : [];
+    });
+  }, [files, recentUploadIds]);
 
   const handleFiles = (pickedFiles: File[]) => {
     const accepted: File[] = [];
@@ -48,7 +57,10 @@ export function FilesPage() {
       }
     }
 
-    if (accepted.length > 0) addFiles(accepted);
+    if (accepted.length > 0) {
+      const addedIds = addFiles(accepted);
+      setRecentUploadIds(addedIds);
+    }
     if (rejected.length > 0) {
       setUploadFeedback({
         tone: "error",
@@ -109,6 +121,42 @@ export function FilesPage() {
             닫기
           </button>
         </div>
+      ) : null}
+
+      {recentUploadBatch.length > 0 ? (
+        <section className="card upload-batch" aria-labelledby="upload-batch-title">
+          <div className="card-head">
+            <div>
+              <h2 className="title-sm" id="upload-batch-title">이번 업로드</h2>
+              <p className="caption">선택한 {formatNumber(recentUploadBatch.length)}개 파일을 각각 처리하고 있습니다.</p>
+            </div>
+            <button className="btn btn-text" type="button" onClick={() => setRecentUploadIds([])}>목록 닫기</button>
+          </div>
+          <ul className="upload-batch-list">
+            {recentUploadBatch.map((file) => {
+              const progress = file.uploadProgress ?? (file.status === "completed" ? 100 : 0);
+              return (
+                <li className="upload-batch-item" key={file.id}>
+                  <div className="upload-batch-meta">
+                    <span className="file-name-link">{file.originalName}</span>
+                    <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
+                    <span className="caption num">{progress}%</span>
+                  </div>
+                  <div
+                    className="upload-progress"
+                    role="progressbar"
+                    aria-label={`${file.originalName} 처리 진행률`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progress}
+                  >
+                    <span style={{ width: `${progress}%` }} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       ) : null}
 
       <section className="card" aria-labelledby="file-list-title">
@@ -193,7 +241,12 @@ export function FilesPage() {
               key: "status",
               header: "상태",
               render: (file) => (
-                <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
+                <div className="status-cell">
+                  <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
+                  {file.status === "processing" && file.uploadProgress !== undefined ? (
+                    <span className="caption num">{file.uploadProgress}%</span>
+                  ) : null}
+                </div>
               ),
             },
             { key: "date", header: "업로드일", numeric: true, render: (file) => formatDate(file.createdAt) },

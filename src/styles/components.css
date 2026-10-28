@@ -986,6 +986,55 @@ td.num {
   background: var(--color-primary);
 }
 
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.upload-batch .card-head {
+  margin-bottom: var(--space-sm);
+}
+
+.upload-batch-list {
+  border-top: 1px solid var(--color-hairline-on-dark);
+}
+
+.upload-batch-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-hairline-on-dark);
+}
+
+.upload-batch-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.upload-batch-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 44px;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.upload-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-elevated-dark);
+}
+
+.upload-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 300ms ease;
+}
+
 .cleaning-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1144,6 +1193,14 @@ td.num {
 
   .file-filters .filter-select {
     flex: 1 1 calc(50% - var(--space-sm));
+  }
+
+  .upload-batch-meta {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .upload-batch-meta .caption {
+    grid-column: 2;
   }
 
   .footer {
