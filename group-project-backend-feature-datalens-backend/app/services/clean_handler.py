@@ -165,7 +165,7 @@ async def clean(ctx: JobContext) -> None:
             raise AppError("SOURCE_MISSING", "원본 파일이 저장소에 없습니다.", 422)
 
         await ctx.report("cleaning", 20)
-        results = ResultRepository(ctx.db)
+        results = ResultRepository(ctx.db, ctx.job.owner_id)
         # 버전을 먼저 정해야 산출물 파일 이름(v{version}.csv)을 정할 수 있다
         version = await results.next_version(ctx.file.id, "cleaning")
         artifact_key = cleaned_data_key(ctx.file.id, version)
@@ -183,6 +183,7 @@ async def clean(ctx: JobContext) -> None:
         await ctx.report("saving", 90)
         await results.insert(
             ResultDocument(
+                owner_id=ctx.job.owner_id,
                 field=ctx.file.id,
                 job_id=ctx.job.id,
                 result_type="cleaning",

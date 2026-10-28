@@ -34,6 +34,8 @@ class ProcessingCapabilities(MongoModel):
 class FileDocument(MongoDocument):
     """files 컬렉션 문서(docs/db-schema/schema.md의 files 표)."""
 
+    # 다중 사용자 배포의 소유자. 인증을 끈 기존 로컬 데이터는 None일 수 있다.
+    owner_id: ObjectId | None = None
     original_name: str
     # 점 없는 소문자 확장자(예: csv). mimeType은 확장자가 아니라 실제 내용으로 감지한 값
     extension: str

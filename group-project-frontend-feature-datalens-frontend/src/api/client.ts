@@ -34,8 +34,11 @@ export const apiRoutes = {
   reviews: "/api/v1/complaints/reviews",
   review: (reviewId: string) => `/api/v1/complaints/reviews/${reviewId}`,
   authSession: "/api/v1/auth/session",
+  authSignup: "/api/v1/auth/signup",
   authLogin: "/api/v1/auth/login",
   authLogout: "/api/v1/auth/logout",
+  authPasswordResetRequest: "/api/v1/auth/password-reset/request",
+  authPasswordResetConfirm: "/api/v1/auth/password-reset/confirm",
 } as const;
 
 /** API 경로와 fetch 옵션을 받아 JSON 응답을 반환하고 실패를 AppError로 변환합니다. */

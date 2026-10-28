@@ -189,6 +189,18 @@ export type ApiReview = {
   complaint: ApiComplaint | null;
 };
 
+export type AuthUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  role: "admin" | "user";
+};
+
+type AuthSession = {
+  authenticated: boolean;
+  user: AuthUser | null;
+};
+
 /** 공통 성공 응답에서 data를 꺼내고 비정상 응답은 AppError로 통일합니다. */
 function unwrap<T>(response: ApiResponse<T>): T {
   if (response.success && response.data !== null) return response.data;
@@ -199,19 +211,41 @@ function unwrap<T>(response: ApiResponse<T>): T {
 }
 
 export const datalensApi = {
-  async session(): Promise<boolean> {
-    const response = await apiRequest<ApiResponse<{ authenticated: boolean }>>(apiRoutes.authSession);
-    return unwrap(response).authenticated;
+  async session(): Promise<AuthSession> {
+    return unwrap(await apiRequest<ApiResponse<AuthSession>>(apiRoutes.authSession));
   },
-  async login(password: string): Promise<void> {
-    await apiRequest<ApiResponse<{ authenticated: boolean }>>(apiRoutes.authLogin, {
+  async signup(email: string, displayName: string, password: string): Promise<AuthUser> {
+    const session = unwrap(await apiRequest<ApiResponse<AuthSession>>(apiRoutes.authSignup, {
       method: "POST",
-      data: { password },
-    });
+      data: { email, displayName, password },
+    }));
+    if (!session.user) throw new AppError("INVALID_API_RESPONSE", "가입 사용자 정보가 없습니다.");
+    return session.user;
+  },
+  async login(email: string, password: string): Promise<AuthUser> {
+    const session = unwrap(await apiRequest<ApiResponse<AuthSession>>(apiRoutes.authLogin, {
+      method: "POST",
+      data: { email, password },
+    }));
+    if (!session.user) throw new AppError("INVALID_API_RESPONSE", "로그인 사용자 정보가 없습니다.");
+    return session.user;
   },
   async logout(): Promise<void> {
-    await apiRequest<ApiResponse<{ authenticated: boolean }>>(apiRoutes.authLogout, {
+    await apiRequest<ApiResponse<AuthSession>>(apiRoutes.authLogout, {
       method: "POST",
+    });
+  },
+  async requestPasswordReset(email: string): Promise<string | null> {
+    const result = unwrap(await apiRequest<ApiResponse<{ message: string; resetToken: string | null }>>(
+      apiRoutes.authPasswordResetRequest,
+      { method: "POST", data: { email } },
+    ));
+    return result.resetToken;
+  },
+  async resetPassword(token: string, password: string): Promise<void> {
+    await apiRequest<ApiResponse<{ message: string }>>(apiRoutes.authPasswordResetConfirm, {
+      method: "POST",
+      data: { token, password },
     });
   },
   async dashboard(): Promise<ApiDashboardSummary> {

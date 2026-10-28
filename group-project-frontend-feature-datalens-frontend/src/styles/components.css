@@ -60,6 +60,15 @@
   margin-left: auto;
 }
 
+.nav-user {
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .btn.btn-nav-login,
 .btn.btn-nav-logout,
 .btn.btn-nav-signup {

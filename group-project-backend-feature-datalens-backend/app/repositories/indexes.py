@@ -9,6 +9,7 @@ from app.repositories.issues import IssueRepository
 from app.repositories.jobs import JobRepository
 from app.repositories.results import ResultRepository
 from app.repositories.reviews import ReviewRepository
+from app.repositories.users import PasswordResetRepository, SessionRepository, UserRepository
 
 
 async def ensure_indexes(db: AsyncDatabase[Document]) -> None:
@@ -23,6 +24,10 @@ async def ensure_indexes(db: AsyncDatabase[Document]) -> None:
     await FileRepository(db).ensure_indexes()
     await JobRepository(db).ensure_indexes()
     await ResultRepository(db).ensure_indexes()
+    # 사용자·세션·일회용 재설정 토큰. 만료 문서는 TTL 인덱스가 자동 정리한다.
+    await UserRepository(db).ensure_indexes()
+    await SessionRepository(db).ensure_indexes()
+    await PasswordResetRepository(db).ensure_indexes()
     # 민원 전용 컬렉션(PRD 5.2·7.3·7.4 제안). 저장소마다 생성자 인자가 같아 반복문으로 처리한다
     for repository in (
         CategoryRepository(db),

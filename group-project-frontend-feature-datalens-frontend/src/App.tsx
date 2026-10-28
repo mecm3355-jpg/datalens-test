@@ -16,11 +16,14 @@ const DataPage = lazy(() => import("./pages/DataPage").then((module) => ({ defau
 const FileCleaningPage = lazy(() => import("./pages/FileCleaningPage").then((module) => ({ default: module.FileCleaningPage })));
 const FileDetailPage = lazy(() => import("./pages/FileDetailPage").then((module) => ({ default: module.FileDetailPage })));
 const FilesPage = lazy(() => import("./pages/FilesPage").then((module) => ({ default: module.FilesPage })));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage").then((module) => ({ default: module.ForgotPasswordPage })));
 const IssueDetailPage = lazy(() => import("./pages/IssueDetailPage").then((module) => ({ default: module.IssueDetailPage })));
 const IssuesPage = lazy(() => import("./pages/IssuesPage").then((module) => ({ default: module.IssuesPage })));
 const LoginPage = lazy(() => import("./pages/LoginPage").then((module) => ({ default: module.LoginPage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((module) => ({ default: module.NotFoundPage })));
 const ReviewsPage = lazy(() => import("./pages/ReviewsPage").then((module) => ({ default: module.ReviewsPage })));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage").then((module) => ({ default: module.ResetPasswordPage })));
+const SignupPage = lazy(() => import("./pages/SignupPage").then((module) => ({ default: module.SignupPage })));
 
 function ProtectedShell() {
   const { loggedIn, loading } = useSession();
@@ -43,7 +46,9 @@ export function App() {
           <Suspense fallback={<p className="notice">화면을 불러오는 중입니다.</p>}>
             <Routes>
               <Route path="login" element={<LoginPage />} />
-              <Route path="signup" element={<Navigate to="/login" replace />} />
+              <Route path="signup" element={<SignupPage />} />
+              <Route path="forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="reset-password" element={<ResetPasswordPage />} />
               <Route element={<ProtectedShell />}>
                 <Route index element={<DashboardPage />} />
                 <Route path="files" element={<FilesPage />} />

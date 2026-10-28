@@ -22,15 +22,18 @@ class ResultRepository(BaseRepository[ResultDocument]):
         # 작업에서 그 작업이 만든 결과를 찾을 때용(CLAUDE.md 인덱스 규칙)
         IndexModel([("jobId", ASCENDING)], name="jobId"),
         IndexModel([("createAt", DESCENDING)], name="createAt_desc"),
+        IndexModel([("ownerId", ASCENDING), ("createAt", DESCENDING)], name="ownerId_createAt"),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """processing_results 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, ResultDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, ResultDocument, scope)
 
     async def get_latest(self, file_id: ObjectId, result_type: ResultType) -> ResultDocument | None:
         """한 파일의 결과 종류별 최신 버전을 돌려준다. 없으면 None.
@@ -77,7 +80,7 @@ class ResultRepository(BaseRepository[ResultDocument]):
             result_type: analysis, cleaning, report 중 하나
         """
         pipeline: list[Document] = [
-            {"$match": {"resultType": result_type}},
+            {"$match": self._scoped({"resultType": result_type})},
             # 파일별 최신 버전만 집계해야 재처리한 파일이 여러 번 세어지지 않는다.
             # 정렬 후 $first로 파일마다 가장 높은 버전 하나를 고른다
             {"$sort": {"field": ASCENDING, "version": DESCENDING}},
@@ -93,5 +96,5 @@ class ResultRepository(BaseRepository[ResultDocument]):
             file_id: 대상 파일 _id
         """
         # 산출물 파일은 서비스가 저장소에서 따로 지운다. 여기서는 DB 문서만 지운다
-        result = await self.collection.delete_many({"field": file_id})
+        result = await self.collection.delete_many(self._scoped({"field": file_id}))
         return result.deleted_count

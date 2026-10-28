@@ -21,15 +21,18 @@ class FileRepository(BaseRepository[FileDocument]):
         IndexModel([("status", ASCENDING), ("createdAt", DESCENDING)], name="status_createdAt"),
         # CLAUDE.md 인덱스 규칙(jobId 등). 작업 ID로 대상 파일을 거꾸로 찾을 때를 대비한다
         IndexModel([("lastJobId", ASCENDING)], name="lastJobId"),
+        IndexModel([("ownerId", ASCENDING), ("createdAt", DESCENDING)], name="ownerId_createdAt"),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """files 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, FileDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, FileDocument, scope)
 
     async def total_size_bytes(self) -> int:
         """모든 파일의 크기 합(바이트)을 돌려준다.
@@ -37,7 +40,10 @@ class FileRepository(BaseRepository[FileDocument]):
         파라미터: 없음
         """
         # 문서를 모두 읽지 않고 DB에서 합계만 계산한다(대시보드 전체 용량)
-        pipeline: list[Document] = [{"$group": {"_id": None, "total": {"$sum": "$sizeBytes"}}}]
+        pipeline: list[Document] = []
+        if self._scope:
+            pipeline.append({"$match": dict(self._scope)})
+        pipeline.append({"$group": {"_id": None, "total": {"$sum": "$sizeBytes"}}})
         cursor = await self.collection.aggregate(pipeline)
         rows = [row async for row in cursor]
         total = rows[0]["total"] if rows else 0
@@ -87,7 +93,7 @@ class FileRepository(BaseRepository[FileDocument]):
             status: 이 상태인 파일만. None이면 전체
             name: 원래 파일명 검색어
         """
-        return await self.collection.count_documents(self._query(status, name))
+        return await self.collection.count_documents(self._scoped(self._query(status, name)))
 
     async def update_status(
         self, file_id: ObjectId, status: FileStatus, last_job_id: ObjectId | None = None
@@ -104,6 +110,6 @@ class FileRepository(BaseRepository[FileDocument]):
         # 작업 없이 상태만 바꾸는 경우(예: 실패 처리) 기존 lastJobId를 지우지 않도록 넘긴 때만 쓴다
         if last_job_id is not None:
             changes["lastJobId"] = last_job_id
-        result = await self.collection.update_one({"_id": file_id}, {"$set": changes})
+        result = await self.collection.update_one(self._scoped({"_id": file_id}), {"$set": changes})
         # 값이 같아 modified가 0이어도 문서는 있으므로 matched로 판단한다
         return result.matched_count == 1

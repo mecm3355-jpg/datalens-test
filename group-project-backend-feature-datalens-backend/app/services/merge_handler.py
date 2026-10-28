@@ -260,9 +260,10 @@ async def merge(ctx: JobContext) -> None:
         # 통합 결과는 진단 결과(analysis)로 저장해 일반 파일과 같은 화면·API로 조회하게 한다.
         # merged·sources·distributions는 통합 파일에만 붙는 analysis 항목이다
         await ctx.report("saving", 90)
-        results = ResultRepository(ctx.db)
+        results = ResultRepository(ctx.db, ctx.job.owner_id)
         await results.insert(
             ResultDocument(
+                owner_id=ctx.job.owner_id,
                 field=ctx.file.id,
                 job_id=ctx.job.id,
                 result_type="analysis",

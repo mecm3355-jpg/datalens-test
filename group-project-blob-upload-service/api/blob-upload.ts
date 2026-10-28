@@ -6,47 +6,26 @@ import {
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const INCOMING_PATH = /^incoming\/[0-9a-f-]{36}-[^/]{1,120}$/iu;
-const COOKIE_NAME = "datalens_session";
 
 async function authenticated(request: Request): Promise<boolean> {
   if (process.env.AUTH_REQUIRED !== "true") return true;
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) throw new Error("AUTH_SECRET이 설정되지 않았습니다.");
   const cookie = request.headers.get("cookie") ?? "";
-  const token = cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${COOKIE_NAME}=`))
-    ?.slice(COOKIE_NAME.length + 1);
-  const parts = token?.split(".") ?? [];
-  if (parts.length !== 2) return false;
-  const [payload, signature] = parts;
-  if (!payload || !/^[0-9a-f]{64}$/iu.test(signature ?? "")) return false;
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["verify"],
-  );
-  const signatureBytes = Uint8Array.from(signature.match(/.{1,2}/g) ?? [], (value) =>
-    Number.parseInt(value, 16),
-  );
-  const valid = await crypto.subtle.verify(
-    "HMAC",
-    key,
-    signatureBytes,
-    new TextEncoder().encode(payload),
-  );
-  if (!valid) return false;
-  try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-      exp?: number;
-    };
-    return typeof parsed.exp === "number" && parsed.exp > Math.floor(Date.now() / 1000);
-  } catch {
-    return false;
+  if (!cookie) return false;
+
+  // MongoDB에 저장된 불투명 세션은 백엔드만 검증한다. Blob 서비스가
+  // 비밀키나 세션 저장소 구현을 중복 소유하지 않도록 같은 배포의 세션 API에 위임한다.
+  const sessionUrl = new URL("/api/v1/auth/session", request.url);
+  const response = await fetch(sessionUrl, {
+    method: "GET",
+    headers: { accept: "application/json", cookie },
+    redirect: "manual",
+  });
+
+  if (response.status === 401) return false;
+  if (!response.ok) {
+    throw new Error("로그인 세션을 확인할 수 없습니다.");
   }
+  return true;
 }
 
 async function handle(request: Request): Promise<Response> {

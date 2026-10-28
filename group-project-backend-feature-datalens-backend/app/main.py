@@ -9,10 +9,11 @@ from starlette.responses import Response
 
 from app.api import auth, complaints, dashboard, files, health, internal, jobs
 from app.api.error_handlers import register_error_handlers
-from app.core.auth import COOKIE_NAME, valid_session_token
+from app.core.auth import COOKIE_NAME
 from app.core.config import Settings, get_settings
-from app.core.database import Mongo, set_mongo
+from app.core.database import Mongo, get_mongo, set_mongo
 from app.repositories.indexes import ensure_indexes
+from app.services.auth_service import AuthService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -52,9 +53,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         protected = request.url.path.startswith("/api/v1/") and not request.url.path.startswith(
             "/api/v1/auth/"
         )
+        request.state.current_user = None
         if resolved.auth_required and protected:
             token = request.cookies.get(COOKIE_NAME)
-            if not valid_session_token(token, resolved):
+            user = await AuthService(get_mongo().db, resolved).authenticate(token)
+            if user is None:
                 return JSONResponse(
                     status_code=401,
                     content={
@@ -63,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "error": {"code": "AUTH_REQUIRED", "message": "로그인이 필요합니다."},
                     },
                 )
+            request.state.current_user = user
         return await call_next(request)
 
     origins = resolved.allowed_cors_origins()

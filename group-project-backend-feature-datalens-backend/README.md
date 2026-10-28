@@ -25,10 +25,22 @@ CORS_ORIGINS=http://localhost:5173,https://datalenstest.vercel.app
 MAX_UPLOAD_BYTES=104857600
 MAX_PDF_PAGES=500
 AUTH_REQUIRED=false
-AUTH_PASSWORD=change-me
-AUTH_SECRET=replace-with-a-long-random-secret
 AUTH_COOKIE_SECURE=false
+AUTH_REGISTRATION_ENABLED=true
+AUTH_SESSION_SECONDS=28800
+AUTH_MAX_FAILED_ATTEMPTS=5
+AUTH_LOCKOUT_SECONDS=900
+AUTH_PASSWORD_RESET_SECONDS=1800
+AUTH_EXPOSE_RESET_TOKEN=false
 ```
+
+운영 배포에서는 `AUTH_REQUIRED=true`, `AUTH_COOKIE_SECURE=true`로 설정한다. 첫 가입자는
+관리자가 되며 기존 `ownerId` 없는 파일·작업·결과는 그 계정 소유로 이전된다. 이후 가입자는
+자신의 파일과 처리 결과만 조회·수정·삭제할 수 있다. 비밀번호는 MongoDB에 Argon2id 해시로만
+저장되고 세션 쿠키 원문도 DB에는 저장하지 않는다.
+
+`AUTH_EXPOSE_RESET_TOKEN=true`는 이메일 발송 연동 전 로컬 기능 확인용이다. 재설정 토큰이
+API 응답에 포함되므로 운영 환경에서는 사용하지 않는다.
 
 Azure OpenAI 키와 배포 이름은 AI 리포트를 사용할 때만 백엔드 환경에 추가한다. 프런트엔드 `VITE_*` 변수에는 비밀값을 넣지 않는다.
 

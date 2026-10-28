@@ -47,6 +47,7 @@ class ResultDocument(MongoDocument):
     analysis·cleaning·ai는 파일 유형·작업마다 구조가 달라 JSON 객체로 둔다.
     """
 
+    owner_id: ObjectId | None = None
     field: ObjectId
     job_id: ObjectId
     result_type: ResultType

@@ -20,15 +20,18 @@ class ReviewRepository(BaseRepository[ReviewDocument]):
         IndexModel([("status", ASCENDING)], name="status"),
         IndexModel([("createdAt", DESCENDING)], name="createdAt_desc"),
         IndexModel([("jobId", ASCENDING)], name="jobId"),
+        IndexModel([("ownerId", ASCENDING), ("createdAt", ASCENDING)], name="ownerId_createdAt"),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """reviews 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, ReviewDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, ReviewDocument, scope)
 
     async def list_page(
         self, status: Literal["pending", "done"] | None, skip: int, limit: int
@@ -42,7 +45,7 @@ class ReviewRepository(BaseRepository[ReviewDocument]):
         """
         query: dict[str, object] = {} if status is None else {"status": status}
         # 페이지 계산용 전체 건수는 skip·limit 없이 같은 조건으로 센다
-        total = await self.collection.count_documents(query)
+        total = await self.collection.count_documents(self._scoped(query))
         # 오래 기다린 검토부터 처리하도록 오래된 순으로 준다
         return await self._find(query, [("createdAt", ASCENDING)], skip, limit), total
 
@@ -59,7 +62,7 @@ class ReviewRepository(BaseRepository[ReviewDocument]):
         """
         result = await self.collection.update_one(
             # 끝난 검토를 다시 덮어쓰지 않도록 대기 중인 것만 바꾼다
-            {"_id": review_id, "status": "pending"},
+            self._scoped({"_id": review_id, "status": "pending"}),
             {
                 "$set": {
                     "status": "done",
@@ -78,7 +81,9 @@ class ReviewRepository(BaseRepository[ReviewDocument]):
             complaint_ids: 민원 _id 목록
         """
         if complaint_ids:
-            await self.collection.delete_many({"complaintId": {"$in": list(complaint_ids)}})
+            await self.collection.delete_many(
+                self._scoped({"complaintId": {"$in": list(complaint_ids)}})
+            )
 
     async def cancel_pending_for(self, complaint_ids: Sequence[ObjectId]) -> None:
         """다시 분석해 사라진 민원의 대기 검토를 지운다.
@@ -89,5 +94,5 @@ class ReviewRepository(BaseRepository[ReviewDocument]):
         if complaint_ids:
             await self.collection.delete_many(
                 # 끝난 검토는 사람이 내린 판단 이력이라 남기고, 대기 건만 지운다
-                {"complaintId": {"$in": list(complaint_ids)}, "status": "pending"}
+                self._scoped({"complaintId": {"$in": list(complaint_ids)}, "status": "pending"})
             )

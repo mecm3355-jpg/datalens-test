@@ -1,3 +1,4 @@
+from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from pymongo.asynchronous.database import AsyncDatabase
 
@@ -20,15 +21,21 @@ class IssueRepository(BaseRepository[IssueDocument]):
         # GeoJSON 좌표 위치 조회용 구면 인덱스(지도·반경 조회 대비).
         # 이슈 묶기의 거리 비교는 issue_grouping이 직접 계산한다
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
+        IndexModel(
+            [("ownerId", ASCENDING), ("lastReceivedAt", DESCENDING)],
+            name="ownerId_lastReceivedAt",
+        ),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """issues 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, IssueDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, IssueDocument, scope)
 
     async def open_issues(self) -> list[IssueDocument]:
         """열린 이슈 전체(카테고리 순).
@@ -46,4 +53,6 @@ class IssueRepository(BaseRepository[IssueDocument]):
         """
         issue.updated_at = utc_now()
         # 여러 필드(건수·기간·긴급도·민원 목록)가 함께 바뀌므로 $set 대신 문서 전체를 교체한다
-        await self.collection.replace_one({"_id": issue.id}, issue.to_document())
+        raw = issue.to_document()
+        raw.update(self._scope)
+        await self.collection.replace_one(self._scoped({"_id": issue.id}), raw)

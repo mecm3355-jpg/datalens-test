@@ -10,7 +10,7 @@ const links = [
 ];
 
 export function TopNav() {
-  const { loggedIn, logout } = useSession();
+  const { loggedIn, logout, user } = useSession();
   const [open, setOpen] = useState(false);
 
   return (
@@ -40,9 +40,12 @@ export function TopNav() {
         </nav>
         <div className="nav-tools">
           {loggedIn ? (
-            <button type="button" className="btn btn-nav-logout" onClick={() => void logout()}>
-              로그아웃
-            </button>
+            <>
+              {user ? <span className="nav-user" title={user.email}>{user.displayName}</span> : null}
+              <button type="button" className="btn btn-nav-logout" onClick={() => void logout()}>
+                로그아웃
+              </button>
+            </>
           ) : (
             <>
               <Link to="/login" className="btn btn-nav-login">

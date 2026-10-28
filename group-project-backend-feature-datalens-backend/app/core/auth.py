@@ -1,51 +1,103 @@
-"""공개 데모 배포를 보호하는 단일 운영자 세션 인증."""
+"""MongoDB 계정 인증에 사용하는 비밀번호·세션 토큰 도구."""
 
-import base64
 import hashlib
-import hmac
-import json
-import time
+import re
+import secrets
 
-from app.core.config import Settings
-from app.core.errors import AppError
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 
 COOKIE_NAME = "datalens_session"
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_PASSWORD_HASHER = PasswordHasher(
+    time_cost=3,
+    memory_cost=65536,
+    parallelism=2,
+    hash_len=32,
+    salt_len=16,
+)
+# 존재하지 않는 계정도 실제 해시 검증을 수행해 이메일 존재 여부의 시간 차이를 줄인다.
+_DUMMY_PASSWORD_HASH = _PASSWORD_HASHER.hash("DataLens-dummy-password-2026")
 
 
-def _secret(settings: Settings) -> bytes:
-    if settings.auth_secret is None:
-        raise AppError("AUTH_NOT_CONFIGURED", "AUTH_SECRET이 설정되지 않았습니다.", 503)
-    return settings.auth_secret.get_secret_value().encode()
+def normalize_email(email: str) -> str:
+    """이메일을 조회·중복 검사에 사용할 형태로 정규화한다.
+
+    파라미터:
+        email: 사용자가 입력한 이메일
+    """
+    return email.strip().lower()
 
 
-def create_session_token(settings: Settings) -> str:
-    """만료 시각을 담은 서명 토큰을 만든다."""
-    payload = json.dumps(
-        {"exp": int(time.time()) + settings.auth_session_seconds}, separators=(",", ":")
-    ).encode()
-    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
-    signature = hmac.new(_secret(settings), encoded.encode(), hashlib.sha256).hexdigest()
-    return f"{encoded}.{signature}"
+def valid_email(email: str) -> bool:
+    """기본 이메일 형식을 확인한다.
+
+    파라미터:
+        email: 정규화된 이메일
+    """
+    return EMAIL_PATTERN.fullmatch(email) is not None and len(email) <= 254
 
 
-def valid_session_token(token: str | None, settings: Settings) -> bool:
-    """서명과 만료 시각을 확인한다. 잘못된 입력은 예외 대신 False다."""
-    if not token or "." not in token:
-        return False
-    encoded, signature = token.rsplit(".", 1)
-    expected = hmac.new(_secret(settings), encoded.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return False
+def validate_password(password: str) -> str | None:
+    """비밀번호 정책 오류 메시지를 반환한다. 유효하면 None이다.
+
+    파라미터:
+        password: 검사할 비밀번호 원문
+    """
+    if len(password) < 10:
+        return "비밀번호는 10자 이상이어야 합니다."
+    if len(password) > 128:
+        return "비밀번호는 128자 이하여야 합니다."
+    if not any(character.isalpha() for character in password):
+        return "비밀번호에 영문 또는 한글을 포함해 주세요."
+    if not any(character.isdigit() for character in password):
+        return "비밀번호에 숫자를 포함해 주세요."
+    return None
+
+
+def hash_password(password: str) -> str:
+    """비밀번호를 Argon2id로 해시한다.
+
+    파라미터:
+        password: 정책 검사를 통과한 비밀번호 원문
+    """
+    return _PASSWORD_HASHER.hash(password)
+
+
+def verify_password(password_hash: str, password: str) -> bool:
+    """Argon2id 해시와 입력 비밀번호가 일치하는지 확인한다.
+
+    파라미터:
+        password_hash: 저장된 Argon2id 해시
+        password: 사용자가 입력한 비밀번호
+    """
     try:
-        padded = encoded + "=" * (-len(encoded) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-        return isinstance(payload, dict) and int(payload.get("exp", 0)) > int(time.time())
-    except (ValueError, TypeError, json.JSONDecodeError):
+        return _PASSWORD_HASHER.verify(password_hash, password)
+    except (VerificationError, InvalidHashError):
         return False
 
 
-def valid_password(password: str, settings: Settings) -> bool:
-    """운영 비밀번호를 timing-safe 비교한다."""
-    if settings.auth_password is None:
-        raise AppError("AUTH_NOT_CONFIGURED", "AUTH_PASSWORD가 설정되지 않았습니다.", 503)
-    return hmac.compare_digest(password, settings.auth_password.get_secret_value())
+def verify_dummy_password(password: str) -> None:
+    """존재하지 않는 계정에도 실제 해시 검증 비용을 적용한다.
+
+    파라미터:
+        password: 사용자가 입력한 비밀번호
+    """
+    verify_password(_DUMMY_PASSWORD_HASH, password)
+
+
+def new_opaque_token() -> str:
+    """세션·재설정에 사용할 예측 불가능한 URL-safe 토큰을 만든다.
+
+    파라미터: 없음
+    """
+    return secrets.token_urlsafe(48)
+
+
+def hash_token(token: str) -> str:
+    """원문 토큰을 저장하지 않도록 SHA-256 해시로 바꾼다.
+
+    파라미터:
+        token: 쿠키 또는 재설정 링크에서 받은 원문 토큰
+    """
+    return hashlib.sha256(token.encode()).hexdigest()

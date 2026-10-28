@@ -18,15 +18,18 @@ class CandidateRepository(BaseRepository[CandidateDocument]):
         IndexModel([("jobId", ASCENDING)], name="jobId"),
         IndexModel([("period", ASCENDING)], name="period"),
         IndexModel([("decision", ASCENDING)], name="decision"),
+        IndexModel([("ownerId", ASCENDING), ("createdAt", DESCENDING)], name="ownerId_createdAt"),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """category_candidates 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, CandidateDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, CandidateDocument, scope)
 
     async def list_by(
         self, decision: CandidateDecision | None = None, period: str | None = None
@@ -56,7 +59,7 @@ class CandidateRepository(BaseRepository[CandidateDocument]):
         # 지운 _id를 돌려줘야 하므로 먼저 읽고 지운다(서비스가 그 후보를 가리키던 참조를 정리)
         pending = [doc.id for doc in await self._find({"decision": "pending"}, [])]
         if pending:
-            await self.collection.delete_many({"_id": {"$in": pending}})
+            await self.collection.delete_many(self._scoped({"_id": {"$in": pending}}))
         return pending
 
     async def decide(
@@ -81,7 +84,7 @@ class CandidateRepository(BaseRepository[CandidateDocument]):
         """
         result = await self.collection.update_one(
             # 조건에 pending을 넣어 두 사람이 동시에 결정해도 먼저 기록한 한 명만 반영되게 한다
-            {"_id": candidate_id, "decision": "pending"},
+            self._scoped({"_id": candidate_id, "decision": "pending"}),
             {
                 "$set": {
                     "decision": decision,

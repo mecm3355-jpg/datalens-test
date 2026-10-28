@@ -65,11 +65,12 @@ async def analyze(ctx: JobContext) -> None:
     )
 
     await ctx.report("saving", 90)
-    results = ResultRepository(ctx.db)
+    results = ResultRepository(ctx.db, ctx.job.owner_id)
     # 재처리할 때마다 덮어쓰지 않고 새 버전으로 쌓는다(schema.md processing_results.version)
     version = await results.next_version(ctx.file.id, "analysis")
     await results.insert(
         ResultDocument(
+            owner_id=ctx.job.owner_id,
             field=ctx.file.id,
             job_id=ctx.job.id,
             result_type="analysis",

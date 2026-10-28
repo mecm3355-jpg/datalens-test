@@ -1,5 +1,6 @@
 """비공개 Queue worker와 백엔드 작업 실행 API의 연계 테스트."""
 
+from fastapi import FastAPI
 from pydantic import SecretStr
 from starlette.testclient import TestClient
 
@@ -24,6 +25,7 @@ def upload(client: TestClient) -> tuple[str, str]:
 
 
 def test_internal_queue_endpoint_authenticates_and_processes(db_client: TestClient) -> None:
+    assert isinstance(db_client.app, FastAPI)
     db_client.app.state.settings.queue_worker_secret = SecretStr(SECRET)
     file_id, job_id = upload(db_client)
 

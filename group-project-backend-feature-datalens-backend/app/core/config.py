@@ -17,12 +17,17 @@ class Settings(BaseSettings):
     mongodb_uri: str
     mongodb_db_name: str = "datalens"
 
-    # 운영 인증. AUTH_REQUIRED=true일 때 비밀번호 로그인과 서명된 HttpOnly 쿠키를 요구한다.
+    # MongoDB 사용자 인증. AUTH_REQUIRED=true면 보호 API에 서버 세션 쿠키를 요구한다.
     auth_required: bool = False
-    auth_password: SecretStr | None = None
-    auth_secret: SecretStr | None = None
+    # 이전 공용 운영자 로그인 환경 변수와의 배포 호환을 위해 읽기만 한다.
     auth_session_seconds: int = 8 * 60 * 60
-    auth_cookie_secure: bool = False
+    auth_cookie_secure: bool = True
+    auth_registration_enabled: bool = True
+    auth_max_failed_attempts: int = 5
+    auth_lockout_seconds: int = 15 * 60
+    auth_password_reset_seconds: int = 30 * 60
+    # 이메일 발송 연동 전 로컬 데모에서만 재설정 토큰을 응답에 포함한다.
+    auth_expose_reset_token: bool = False
 
     # 독립 배포된 Vite 프런트엔드가 API를 호출할 수 있는 출처 목록.
     # 쉼표로 구분해 Vercel 운영 도메인과 로컬 개발 주소를 함께 지정한다.
@@ -74,15 +79,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_auth_configuration(self) -> Self:
-        """인증을 켠 배포가 빈 비밀번호나 약한 서명 키로 시작하지 않게 한다."""
-        if not self.auth_required:
-            return self
-        password = self.auth_password.get_secret_value() if self.auth_password else ""
-        secret = self.auth_secret.get_secret_value() if self.auth_secret else ""
-        if len(password) < 8:
-            raise ValueError("AUTH_REQUIRED=true이면 AUTH_PASSWORD를 8자 이상 설정해야 합니다.")
-        if len(secret) < 32:
-            raise ValueError("AUTH_REQUIRED=true이면 AUTH_SECRET을 32자 이상 설정해야 합니다.")
+        """인증 관련 횟수와 만료 시간이 안전한 범위인지 확인한다."""
+        if self.auth_session_seconds < 300:
+            raise ValueError("AUTH_SESSION_SECONDS는 300초 이상이어야 합니다.")
+        if not 3 <= self.auth_max_failed_attempts <= 20:
+            raise ValueError("AUTH_MAX_FAILED_ATTEMPTS는 3~20이어야 합니다.")
+        if self.auth_lockout_seconds < 60:
+            raise ValueError("AUTH_LOCKOUT_SECONDS는 60초 이상이어야 합니다.")
+        if self.auth_password_reset_seconds < 300:
+            raise ValueError("AUTH_PASSWORD_RESET_SECONDS는 300초 이상이어야 합니다.")
         return self
 
     def allowed_cors_origins(self) -> list[str]:

@@ -27,9 +27,10 @@ def _file() -> FileDocument:
 def test_file_document_uses_schema_field_names() -> None:
     doc = _file().to_document()
 
-    # docs/db-schema/schema.md files 표의 필드와 정확히 같아야 한다
+    # 기준 필드와 다중 사용자 격리용 ownerId를 사용한다.
     assert set(doc) == {
         "_id",
+        "ownerId",
         "originalName",
         "extension",
         "mimeType",
@@ -67,6 +68,7 @@ def test_job_document_uses_table_field_names() -> None:
     # 표 기준: field, createAt (예시의 fileId, createdAt 아님 — PRD 7.7)
     assert set(doc) == {
         "_id",
+        "ownerId",
         "field",
         "type",
         "status",
@@ -104,6 +106,7 @@ def test_result_document_keeps_all_result_objects() -> None:
 
     assert set(doc) == {
         "_id",
+        "ownerId",
         "field",
         "jobId",
         "resultType",

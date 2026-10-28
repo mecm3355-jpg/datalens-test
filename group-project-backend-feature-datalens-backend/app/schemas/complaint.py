@@ -56,6 +56,7 @@ class CategoryDocument(MongoDocument):
 class CandidateDocument(MongoDocument):
     """category_candidates — 신규 카테고리 후보와 승인 결정(PRD 7.3)."""
 
+    owner_id: ObjectId | None = None
     job_id: ObjectId
     period: str
     # 후보 군집에 묶인 민원 수
@@ -96,6 +97,7 @@ class ComplaintAttributes(MongoModel):
 class ComplaintDocument(MongoDocument):
     """complaints — 민원 단위 분석 결과(PRD 7.4). 임베딩 벡터는 산출물 파일에 둔다."""
 
+    owner_id: ObjectId | None = None
     file_id: ObjectId
     job_id: ObjectId
     # 원문 위치. CSV·XLSX {row}, PDF·이미지 {page, block}, DOCX {paragraph, tableRow}
@@ -135,6 +137,7 @@ class ComplaintDocument(MongoDocument):
 class ReviewDocument(MongoDocument):
     """reviews — 검토 대기와 검토 결과(PRD 7.3)."""
 
+    owner_id: ObjectId | None = None
     complaint_id: ObjectId
     job_id: ObjectId
     reason: ReviewReason
@@ -149,6 +152,7 @@ class ReviewDocument(MongoDocument):
 class IssueDocument(MongoDocument):
     """issues — 같은 장소·같은 문제의 반복 민원 묶음(PRD 7.3, 4장 7단계)."""
 
+    owner_id: ObjectId | None = None
     category_id: str
     place: str
     location: GeoPoint | None = None

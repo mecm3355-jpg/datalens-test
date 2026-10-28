@@ -119,7 +119,7 @@ def make_report_handler(llm_factory: LlmFactory) -> JobHandler:
             ctx: 작업 실행 정보
         """
         await ctx.report("validating", 5)
-        results = ResultRepository(ctx.db)
+        results = ResultRepository(ctx.db, ctx.job.owner_id)
         # API가 작업을 만들 때 확인했지만, 그 사이 결과가 지워졌을 수 있어 워커에서 다시 본다.
         # 이미 받은 작업의 실행 실패라 404가 아닌 422로 작업 오류에 남긴다
         analysis = await results.get_latest(ctx.file.id, "analysis")
@@ -150,6 +150,7 @@ def make_report_handler(llm_factory: LlmFactory) -> JobHandler:
         await ctx.report("saving", 90)
         await results.insert(
             ResultDocument(
+                owner_id=ctx.job.owner_id,
                 field=ctx.file.id,
                 job_id=ctx.job.id,
                 result_type="report",

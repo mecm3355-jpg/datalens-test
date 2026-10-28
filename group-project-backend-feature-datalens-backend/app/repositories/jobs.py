@@ -25,21 +25,24 @@ class JobRepository(BaseRepository[JobDocument]):
         # 작업 종류(analyze·clean·report 등)별 조회·집계용
         IndexModel([("type", ASCENDING)], name="type"),
         IndexModel([("createAt", DESCENDING)], name="createAt_desc"),
+        IndexModel([("ownerId", ASCENDING), ("createAt", DESCENDING)], name="ownerId_createAt"),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """processing_jobs 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, JobDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, JobDocument, scope)
 
     async def insert(self, doc: JobDocument) -> JobDocument:
         """작업을 저장하고 Vercel 모드에서는 같은 ID로 Queue 메시지를 발행한다."""
-        await super().insert(doc)
+        stored = await super().insert(doc)
         if os.getenv("JOB_DISPATCH_MODE", "local").lower() != "vercel_queue":
-            return doc
+            return stored
 
         # Queue는 at-least-once 전달이므로 작업 ID를 멱등성 키와 payload로 함께 쓴다.
         from vercel.queue import send
@@ -47,14 +50,14 @@ class JobRepository(BaseRepository[JobDocument]):
         try:
             await send(
                 "datalens-jobs",
-                {"job_id": str(doc.id)},
-                idempotency_key=str(doc.id),
+                {"job_id": str(stored.id)},
+                idempotency_key=str(stored.id),
             )
         except Exception:
             # 메시지 없는 queued 문서가 영구히 남지 않게 insert를 되돌린다.
-            await self.delete(doc.id)
+            await self.delete(stored.id)
             raise
-        return doc
+        return stored
 
     async def list_by_file(self, file_id: ObjectId) -> list[JobDocument]:
         """한 파일의 작업 목록을 최신순으로 돌려준다. 재처리 이력 확인에 쓴다.
@@ -74,7 +77,7 @@ class JobRepository(BaseRepository[JobDocument]):
         """
         raw = await self.collection.find_one_and_update(
             # 이 워커에 처리기가 없는 종류는 다른 워커가 가져가도록 남겨 둔다
-            {"status": "queued", "type": {"$in": list(types)}},
+            self._scoped({"status": "queued", "type": {"$in": list(types)}}),
             {"$set": {"status": "processing", "stage": "started", "startedAt": utc_now()}},
             # 먼저 들어온 작업부터 처리(FIFO)해 오래 기다리는 작업이 없게 한다
             sort=[("createAt", ASCENDING)],
@@ -111,7 +114,7 @@ class JobRepository(BaseRepository[JobDocument]):
             ]
             query.pop("status")
         raw = await self.collection.find_one_and_update(
-            query,
+            self._scoped(query),
             {
                 "$set": {"status": "processing", "stage": "started", "startedAt": utc_now()},
                 "$unset": {"error": "", "completedAt": ""},
@@ -123,7 +126,7 @@ class JobRepository(BaseRepository[JobDocument]):
     async def requeue_for_retry(self, job_id: ObjectId, error: JobError) -> bool:
         """Queue가 다시 전달할 수 있도록 실패한 실행을 queued로 되돌린다."""
         result = await self.collection.update_one(
-            {"_id": job_id, "status": "processing"},
+            self._scoped({"_id": job_id, "status": "processing"}),
             {
                 "$set": {
                     "status": "queued",
@@ -143,7 +146,8 @@ class JobRepository(BaseRepository[JobDocument]):
         """
         # 존재 여부만 보면 되므로 _id만 가져온다. 같은 파일에 작업이 겹치는 것을 막는 데 쓴다
         found = await self.collection.find_one(
-            {"field": file_id, "status": {"$in": ["queued", "processing"]}}, {"_id": 1}
+            self._scoped({"field": file_id, "status": {"$in": ["queued", "processing"]}}),
+            {"_id": 1},
         )
         return found is not None
 
@@ -166,7 +170,7 @@ class JobRepository(BaseRepository[JobDocument]):
             job_id: 바꿀 작업 _id
             changes: DB 필드명(camelCase) → 새 값
         """
-        result = await self.collection.update_one({"_id": job_id}, {"$set": changes})
+        result = await self.collection.update_one(self._scoped({"_id": job_id}), {"$set": changes})
         return result.matched_count == 1
 
     async def mark_processing(self, job_id: ObjectId, stage: str) -> bool:
@@ -203,7 +207,7 @@ class JobRepository(BaseRepository[JobDocument]):
         """
         result = await self.collection.update_one(
             # 조건에 status를 넣어, 처리 중 시간 초과로 실패 처리된 작업을 완료로 덮어쓰지 않는다
-            {"_id": job_id, "status": "processing"},
+            self._scoped({"_id": job_id, "status": "processing"}),
             {
                 "$set": {
                     "status": "completed",
@@ -227,7 +231,7 @@ class JobRepository(BaseRepository[JobDocument]):
         result = await self.collection.update_one(
             # 끝난 작업의 결과·오류를 덮어쓰지 않도록 아직 끝나지 않은 작업만 실패로 바꾼다.
             # stage는 건드리지 않아 어느 단계에서 실패했는지 남는다(processing_jobs 실패 원인 추적)
-            {"_id": job_id, "status": {"$in": ["queued", "processing"]}},
+            self._scoped({"_id": job_id, "status": {"$in": ["queued", "processing"]}}),
             {"$set": {"status": "failed", "error": error.to_document(), "completedAt": utc_now()}},
         )
         return result.modified_count == 1
@@ -239,5 +243,5 @@ class JobRepository(BaseRepository[JobDocument]):
             file_id: 대상 파일 _id
         """
         # 파일 삭제 시 함께 지운다(명세서: 파일 및 관련 결과 삭제)
-        result = await self.collection.delete_many({"field": file_id})
+        result = await self.collection.delete_many(self._scoped({"field": file_id}))
         return result.deleted_count

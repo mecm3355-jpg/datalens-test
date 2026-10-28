@@ -33,6 +33,7 @@ class JobDocument(MongoDocument):
     예시 JSON의 fileId·createdAt과 다르며 설계 작성자 확인 대기 중(PRD 7.7).
     """
 
+    owner_id: ObjectId | None = None
     field: ObjectId
     # analyze·clean·report·merge·complaint_analysis 등. 처리기를 추가할 수 있도록 str로 둔다
     type: str

@@ -24,17 +24,20 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         IndexModel([("assignStatus", ASCENDING)], name="assignStatus"),
         IndexModel([("region", ASCENDING)], name="region"),
         IndexModel([("issueId", ASCENDING)], name="issueId"),
+        IndexModel([("ownerId", ASCENDING), ("period", DESCENDING)], name="ownerId_period"),
         # GeoJSON Point 위치 조회용. 좌표가 없는 민원(location=null)은 인덱스에서 빠진다
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
     ]
 
-    def __init__(self, db: AsyncDatabase[Document]) -> None:
+    def __init__(self, db: AsyncDatabase[Document], owner_id: ObjectId | None = None) -> None:
         """complaints 저장소를 만든다.
 
         파라미터:
             db: 사용할 MongoDB 데이터베이스
+            owner_id: 사용자별 범위를 적용할 소유자 ID. None이면 전체
         """
-        super().__init__(db, ComplaintDocument)
+        scope = {} if owner_id is None else {"ownerId": owner_id}
+        super().__init__(db, ComplaintDocument, scope)
 
     async def retire_file(self, file_id: ObjectId) -> int:
         """한 파일의 기존 민원을 deleted로 바꾼다(같은 파일을 다시 분석할 때). 바꾼 수를 돌려준다.
@@ -44,7 +47,7 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         """
         result = await self.collection.update_many(
             # 지우지 않고 deleted로 바꾼다: 끝난 검토 이력이 옛 민원을 가리켜도 깨지지 않게
-            {"fileId": file_id, "status": "active"},
+            self._scoped({"fileId": file_id, "status": "active"}),
             {"$set": {"status": "deleted", "updatedAt": utc_now()}},
         )
         return result.modified_count
@@ -94,7 +97,7 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         ):
             if value is not None:
                 query[key] = value
-        total = await self.collection.count_documents(query)
+        total = await self.collection.count_documents(self._scoped(query))
         # 최근 월부터. _id로 순서를 고정해 페이지를 넘길 때 항목이 겹치거나 빠지지 않게 한다
         items = await self._find(query, [("period", DESCENDING), ("_id", ASCENDING)], skip, limit)
         return items, total
@@ -126,7 +129,8 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         """
         if candidate_ids:
             await self.collection.update_many(
-                {"candidateId": {"$in": list(candidate_ids)}}, {"$set": {"candidateId": None}}
+                self._scoped({"candidateId": {"$in": list(candidate_ids)}}),
+                {"$set": {"candidateId": None}},
             )
 
     async def update_fields(self, updates: Sequence[tuple[ObjectId, dict[str, object]]]) -> None:
@@ -141,7 +145,10 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         # 민원마다 값이 달라 update_many를 못 쓰므로 UpdateOne 묶음을 한 번에 보낸다
         await self.collection.bulk_write(
             [
-                UpdateOne({"_id": oid}, {"$set": {**fields, "updatedAt": now}})
+                UpdateOne(
+                    self._scoped({"_id": oid}),
+                    {"$set": {**fields, "updatedAt": now}},
+                )
                 for oid, fields in updates
             ]
         )
@@ -155,5 +162,5 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         # deleted 상태까지 모두 지운다. 지운 _id는 서비스가 그 민원의 검토를 지우는 데 쓴다
         ids = [doc.id for doc in await self._find({"fileId": file_id}, [])]
         if ids:
-            await self.collection.delete_many({"_id": {"$in": ids}})
+            await self.collection.delete_many(self._scoped({"_id": {"$in": ids}}))
         return ids

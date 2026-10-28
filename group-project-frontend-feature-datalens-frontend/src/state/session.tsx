@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppError } from "../api/AppError";
-import { datalensApi } from "../api/datalens";
+import { datalensApi, type AuthUser } from "../api/datalens";
 
 type SessionValue = {
   loggedIn: boolean;
   loading: boolean;
-  login: (password: string) => Promise<void>;
+  user: AuthUser | null;
+  login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, displayName: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -15,12 +17,21 @@ const API_MODE = import.meta.env.VITE_DATA_MODE === "api";
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [loggedIn, setLoggedIn] = useState(!API_MODE);
   const [loading, setLoading] = useState(API_MODE);
+  const [user, setUser] = useState<AuthUser | null>(null);
   useEffect(() => {
     if (!API_MODE) return;
     let active = true;
     void datalensApi.session()
-      .then((authenticated) => { if (active) setLoggedIn(authenticated); })
-      .catch(() => { if (active) setLoggedIn(false); })
+      .then((session) => {
+        if (!active) return;
+        setLoggedIn(session.authenticated);
+        setUser(session.user);
+      })
+      .catch(() => {
+        if (!active) return;
+        setLoggedIn(false);
+        setUser(null);
+      })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
@@ -28,8 +39,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () => ({
       loggedIn,
       loading,
-      login: async (password: string) => {
-        if (API_MODE) await datalensApi.login(password);
+      user,
+      login: async (email: string, password: string) => {
+        if (API_MODE) setUser(await datalensApi.login(email, password));
+        setLoggedIn(true);
+      },
+      signup: async (email: string, displayName: string, password: string) => {
+        if (API_MODE) setUser(await datalensApi.signup(email, displayName, password));
         setLoggedIn(true);
       },
       logout: async () => {
@@ -37,10 +53,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           if (API_MODE) await datalensApi.logout();
         } finally {
           setLoggedIn(false);
+          setUser(null);
         }
       },
     }),
-    [loading, loggedIn],
+    [loading, loggedIn, user],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

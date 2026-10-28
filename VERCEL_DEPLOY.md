@@ -15,9 +15,29 @@ MONGODB_DB_NAME=datalens
 STORAGE_PROVIDER=vercel_blob
 JOB_DISPATCH_MODE=vercel_queue
 CORS_ORIGINS=https://배포될도메인.vercel.app
+AUTH_REQUIRED=true
+AUTH_COOKIE_SECURE=true
+AUTH_REGISTRATION_ENABLED=true
+AUTH_SESSION_SECONDS=28800
+AUTH_MAX_FAILED_ATTEMPTS=5
+AUTH_LOCKOUT_SECONDS=900
+AUTH_PASSWORD_RESET_SECONDS=1800
+AUTH_EXPOSE_RESET_TOKEN=false
 VITE_DATA_MODE=api
 VITE_UPLOAD_MODE=blob
 ```
+
+기존 공용 `AUTH_PASSWORD`, `AUTH_SECRET`은 제거한다. Blob 업로드 서비스도 백엔드의 MongoDB 세션 API로 인증하므로 별도 공유 비밀키가 필요하지 않다.
+배포 후 첫 회원가입 계정이 관리자가 되고 기존 소유자 없는 데이터가 그 계정으로 이전되므로,
+반드시 프로젝트 관리자가 첫 가입을 완료한 다음 일반 사용자에게 주소를 공개한다.
+
+- Secret: `MONGODB_URI`, Blob 연결이 만든 토큰, `AZURE_OPENAI_*` 키
+- Config: `MONGODB_DB_NAME`, `AUTH_*`, `CORS_ORIGINS`, `STORAGE_PROVIDER`,
+  `JOB_DISPATCH_MODE`, `VITE_*`
+- Preview에는 운영 MongoDB Secret을 재사용하지 말고 별도 DB·계정을 사용한다.
+
+비밀번호 재설정 토큰 생성·사용 API는 포함되어 있지만 운영 메일 발송 공급자는 아직 연결하지
+않았다. `AUTH_EXPOSE_RESET_TOKEN=true`는 토큰을 응답에 노출하므로 로컬 확인에만 사용한다.
 
 Blob 연결 시 `BLOB_READ_WRITE_TOKEN`이 자동 등록된다. Azure OpenAI 기능을 쓸 때만
 `AZURE_OPENAI_*` 값을 추가한다. Python 함수 번들이 기본 한도를 넘을 때는

@@ -221,11 +221,11 @@ async def analyze_complaints(ctx: JobContext) -> None:
     request = ComplaintAnalysisRequest.model_validate_json(raw)
     config = load_analysis_config()
     db = ctx.db
-    complaints_repo = ComplaintRepository(db)
+    complaints_repo = ComplaintRepository(db, ctx.job.owner_id)
     categories_repo = CategoryRepository(db)
-    candidates_repo = CandidateRepository(db)
-    reviews_repo = ReviewRepository(db)
-    issues_repo = IssueRepository(db)
+    candidates_repo = CandidateRepository(db, ctx.job.owner_id)
+    reviews_repo = ReviewRepository(db, ctx.job.owner_id)
+    issues_repo = IssueRepository(db, ctx.job.owner_id)
     now = datetime.now(UTC)
     # 접수일이 없는 민원(문서형 등)은 작업을 돌린 달로 집계한다
     job_month = f"{now.year:04d}-{now.month:02d}"
@@ -517,9 +517,10 @@ async def analyze_complaints(ctx: JobContext) -> None:
         ai["attributes"] = fast_client.usage.to_record()
     if deep_client is not None:
         ai["naming"] = deep_client.usage.to_record()
-    results = ResultRepository(db)
+    results = ResultRepository(db, ctx.job.owner_id)
     await results.insert(
         ResultDocument(
+            owner_id=ctx.job.owner_id,
             field=ctx.file.id,
             job_id=ctx.job.id,
             result_type="analysis",
