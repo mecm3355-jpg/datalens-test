@@ -15,7 +15,8 @@
       ]
     },
     "blob_upload": {
-      "root": "group-project-blob-upload-service"
+      "root": "group-project-blob-upload-service",
+      "entrypoint": "api/blob-upload.ts"
     },
     "backend": {
       "root": "group-project-backend-feature-datalens-backend",
