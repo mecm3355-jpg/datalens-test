@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.api import auth, complaints, dashboard, files, health, jobs
+from app.api import auth, complaints, dashboard, files, health, internal, jobs
 from app.api.error_handlers import register_error_handlers
 from app.core.auth import COOKIE_NAME, valid_session_token
 from app.core.config import Settings, get_settings
@@ -80,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_error_handlers(app)
     # 헬스 체크는 버전과 무관하게 /health에 두고, 업무 API만 /api/v1 아래에 둔다
     app.include_router(health.router)
+    app.include_router(internal.router)
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(jobs.router, prefix="/api/v1")

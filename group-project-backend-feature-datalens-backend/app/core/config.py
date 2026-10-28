@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     job_timeout_seconds: int = 60 * 60
     # local은 별도 polling worker, vercel_queue는 작업 생성 즉시 Vercel Queue로 발행한다.
     job_dispatch_mode: Literal["local", "vercel_queue"] = "local"
+    # 비공개 Queue worker 서비스가 내부 작업 실행 API를 호출할 때 검증하는 공유 비밀.
+    queue_worker_secret: SecretStr | None = None
 
     # Azure OpenAI(PRD 6.1). 값은 .env에만 둔다.
     # 엔드포인트가 .../openai/v1 이면 v1 API(API 버전 불필요), 아니면 API 버전이 필요하다.

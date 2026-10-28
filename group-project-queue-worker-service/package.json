@@ -1,0 +1,19 @@
+{
+  "name": "datalens-queue-worker-service",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vercel/queue": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "zod": "4.6.7"
+  }
+}
