@@ -109,17 +109,9 @@
 
 .footer-top {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr) minmax(180px, 2fr);
   gap: 32px 48px;
   align-items: start;
-}
-
-.footer-brand {
-  grid-column: span 2;
-}
-
-.footer-community {
-  grid-column: span 2;
 }
 
 .footer-logo {
@@ -192,53 +184,6 @@
 .footer-links button:hover,
 .footer-links a:hover {
   color: var(--color-ink);
-}
-
-.footer-stores {
-  display: flex;
-  flex-direction: column;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.store-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  width: 168px;
-  height: 52px;
-  padding: 8px 14px;
-  border: 1px solid #3a3f46;
-  border-radius: 10px;
-  background: #000;
-  color: #fff;
-  text-align: left;
-}
-
-.store-badge svg {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-}
-
-.store-badge span {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.1;
-}
-
-.store-kicker {
-  color: #d5dbe1;
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.2px;
-}
-
-.store-name {
-  margin-top: 2px;
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .footer-bottom {
@@ -1431,15 +1376,8 @@ td.num {
   }
 
   .footer-brand,
-  .footer-community,
-  .footer-stores {
+  .footer-community {
     grid-column: 1 / -1;
-  }
-
-  .footer-stores {
-    flex-direction: row;
-    align-items: center;
-    justify-content: flex-start;
   }
 
   .card {

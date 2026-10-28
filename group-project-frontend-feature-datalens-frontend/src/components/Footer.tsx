@@ -105,22 +105,6 @@ export function Footer() {
             </ul>
           </nav>
 
-          <div className="footer-stores">
-            <button type="button" className="store-badge">
-              <AppleIcon />
-              <span>
-                <span className="store-kicker">Download on the</span>
-                <span className="store-name">App Store</span>
-              </span>
-            </button>
-            <button type="button" className="store-badge">
-              <PlayIcon />
-              <span>
-                <span className="store-kicker">GET IT ON</span>
-                <span className="store-name">Google Play</span>
-              </span>
-            </button>
-          </div>
         </div>
 
         <div className="footer-bottom">
@@ -195,28 +179,6 @@ function YouTubeIcon() {
         fill="currentColor"
         d="M21.6 8.2a2.5 2.5 0 0 0-1.8-1.8C18.2 6 12 6 12 6s-6.2 0-7.8.4a2.5 2.5 0 0 0-1.8 1.8A26 26 0 0 0 2 12a26 26 0 0 0 .4 3.8 2.5 2.5 0 0 0 1.8 1.8C5.8 18 12 18 12 18s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8A26 26 0 0 0 22 12a26 26 0 0 0-.4-3.8zM10.2 15.1V8.9L15.6 12l-5.4 3.1z"
       />
-    </svg>
-  );
-}
-
-function AppleIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M16.4 12.6c0-2.2 1.8-3.3 1.9-3.4-1-1.5-2.6-1.7-3.2-1.7-1.3-.1-2.6.8-3.3.8s-1.7-.8-2.9-.8c-1.5 0-2.8.9-3.6 2.2-1.5 2.7-.4 6.6 1.1 8.8.7 1.1 1.6 2.3 2.7 2.2 1.1 0 1.5-.7 2.8-.7s1.7.7 2.9.7 1.9-1.1 2.6-2.1c.8-1.2 1.1-2.3 1.2-2.4-.1 0-2.2-.8-2.2-3.6zM14.7 6.6c.6-.7 1-1.7.9-2.6-.9 0-1.9.6-2.5 1.3-.6.6-1.1 1.6-.9 2.5 1 .1 1.9-.5 2.5-1.2z"
-      />
-    </svg>
-  );
-}
-
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="#34a853" d="M3.4 20.6 13.2 12 3.4 3.4v17.2z" />
-      <path fill="#fbbc04" d="m13.2 12 3.3 3.1-10.7 6.1L13.2 12z" />
-      <path fill="#ea4335" d="m16.5 8.9-3.3 3.1L5.8 2.8l10.7 6.1z" />
-      <path fill="#4285f4" d="M20.6 10.7c.6.4.6 1.2 0 1.6l-3.1 1.8-3.3-2.1 3.3-2.1 3.1 1.8z" />
     </svg>
   );
 }
