@@ -20,6 +20,13 @@ const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 type StatusFilter = "all" | FileStatus;
 type CategoryFilter = "all" | FileCategory;
 type UploadFeedback = { tone: "success" | "error"; message: string } | null;
+type BulkDeleteProgress = {
+  mode: "selected" | "reset";
+  completed: number;
+  total: number;
+} | null;
+
+const MIN_DELETE_PROGRESS_MS = 450;
 
 /** 파일명에서 마지막 확장자를 소문자로 꺼내 지원 여부 안내에 사용합니다. */
 function fileExtension(name: string): string {
@@ -56,6 +63,7 @@ export function FilesPage() {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<BulkDeleteProgress>(null);
 
   const filteredFiles = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
@@ -208,11 +216,13 @@ export function FilesPage() {
     });
   };
 
-  const deleteMany = async (targets: DataFile[]) => {
+  const deleteMany = async (targets: DataFile[], mode: "selected" | "reset") => {
     const deletable = targets.filter((file) => !file.isUploading);
     if (deletable.length === 0 || isBulkDeleting) return;
 
+    const startedAt = Date.now();
     setIsBulkDeleting(true);
+    setBulkDeleteProgress({ mode, completed: 0, total: deletable.length });
     setDeletingIds((current) => new Set([...current, ...deletable.map((file) => file.id)]));
     const succeeded: string[] = [];
     const failed: DataFile[] = [];
@@ -226,6 +236,10 @@ export function FilesPage() {
           succeeded.push(file.id);
         } catch {
           failed.push(file);
+        } finally {
+          setBulkDeleteProgress((current) => current
+            ? { ...current, completed: Math.min(current.total, current.completed + 1) }
+            : current);
         }
       }
     };
@@ -247,8 +261,13 @@ export function FilesPage() {
           : `${succeeded.length}개 파일을 삭제했습니다.`,
       });
     } finally {
+      const remaining = MIN_DELETE_PROGRESS_MS - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remaining));
+      }
       const targetIds = new Set(deletable.map((file) => file.id));
       setDeletingIds((current) => new Set([...current].filter((id) => !targetIds.has(id))));
+      setBulkDeleteProgress(null);
       setIsBulkDeleting(false);
     }
   };
@@ -256,20 +275,20 @@ export function FilesPage() {
   const deleteSelected = async () => {
     if (selectedFiles.length === 0) return;
     if (!window.confirm(`선택한 ${selectedFiles.length}개 파일과 관련 처리 결과를 모두 삭제할까요?`)) return;
-    await deleteMany(selectedFiles);
+    await deleteMany(selectedFiles, "selected");
   };
 
   const resetAllFiles = async () => {
     const targets = files.filter((file) => !file.isUploading);
     if (targets.length === 0 || files.some((file) => file.isUploading)) return;
     if (!window.confirm(`전체 ${targets.length}개 파일과 관련 결과를 모두 삭제하고 목록을 초기화할까요? 이 작업은 되돌릴 수 없습니다.`)) return;
-    await deleteMany(targets);
+    await deleteMany(targets, "reset");
   };
 
   const hasFilters = query.trim() !== "" || status !== "all" || category !== "all";
 
   return (
-    <div className="page">
+    <div className="page" aria-busy={bulkDeleteProgress !== null}>
       <PageIntro
         eyebrow="입력"
         title="파일"
@@ -571,6 +590,49 @@ export function FilesPage() {
           ]}
         />
       </section>
+
+      {bulkDeleteProgress ? (
+        <div
+          className="bulk-delete-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-delete-title"
+          aria-describedby="bulk-delete-description"
+        >
+          <div className="card bulk-delete-dialog">
+            <span className="bulk-delete-spinner" aria-hidden="true" />
+            <div>
+              <h2 className="title-sm" id="bulk-delete-title">
+                {bulkDeleteProgress.mode === "reset" ? "전체 목록 초기화 중" : "선택한 파일 삭제 중"}
+              </h2>
+              <p className="body" id="bulk-delete-description">
+                서버 부담을 줄이기 위해 파일을 최대 4개씩 안전하게 삭제하고 있습니다.
+              </p>
+            </div>
+            <div className="bulk-delete-count" aria-live="polite">
+              <strong className="num">{formatNumber(bulkDeleteProgress.completed)}</strong>
+              <span className="caption"> / {formatNumber(bulkDeleteProgress.total)}개 처리</span>
+            </div>
+            <div
+              className="upload-progress is-processing"
+              role="progressbar"
+              aria-label="파일 삭제 진행률"
+              aria-valuemin={0}
+              aria-valuemax={bulkDeleteProgress.total}
+              aria-valuenow={bulkDeleteProgress.completed}
+            >
+              <span
+                style={{
+                  width: `${bulkDeleteProgress.total > 0
+                    ? Math.round((bulkDeleteProgress.completed / bulkDeleteProgress.total) * 100)
+                    : 0}%`,
+                }}
+              />
+            </div>
+            <p className="caption">완료될 때까지 창을 닫거나 새로고침하지 마세요.</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

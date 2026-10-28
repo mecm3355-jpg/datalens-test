@@ -135,7 +135,11 @@ describe("FilesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "전체 목록 초기화" }));
 
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/^전체 \d+개 파일.*되돌릴 수 없습니다\.$/));
+    const dialog = await screen.findByRole("dialog", { name: "전체 목록 초기화 중" });
+    expect(dialog).toHaveTextContent("최대 4개씩 안전하게 삭제");
+    expect(screen.getByRole("progressbar", { name: "파일 삭제 진행률" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/전체 0개 중 0개 표시/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "전체 목록 초기화 중" })).not.toBeInTheDocument());
     expect(screen.getByText("조건에 맞는 파일이 없습니다. 검색어나 필터를 변경해 보세요.")).toBeInTheDocument();
   });
 });
