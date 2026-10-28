@@ -93,7 +93,19 @@ export function FileCleaningPage() {
     }
   };
 
-  const visibleRows = showChangedOnly ? preview.filter((row) => row.before !== row.after) : preview;
+  const comparisonRows = preview
+    .map((row) => {
+      const decision = cleaningDecision(fileId, row.ruleId);
+      return {
+        ...row,
+        decision,
+        effectiveAfter: decision === "rejected" ? row.before : row.after,
+      };
+    })
+    .filter((row) => !applied || row.decision === "approved");
+  const visibleRows = showChangedOnly
+    ? comparisonRows.filter((row) => row.before !== row.effectiveAfter)
+    : comparisonRows;
 
   return (
     <div className="page">
@@ -206,7 +218,11 @@ export function FileCleaningPage() {
         <div className="card-head">
           <div>
             <h2 className="title-sm" id="comparison-title">정제 전·후 비교</h2>
-            <p className="caption">최대 {formatNumber(preview.length)}개 변경 예시를 보여줍니다.</p>
+            <p className="caption">
+              {applied
+                ? `승인되어 적용된 변경 ${formatNumber(comparisonRows.length)}개를 보여줍니다.`
+                : `규칙 검토 결과에 따른 변경 예정 항목 ${formatNumber(comparisonRows.length)}개를 보여줍니다.`}
+            </p>
           </div>
           <button
             className={`chip-btn ${showChangedOnly ? "is-active" : ""}`}
@@ -226,14 +242,24 @@ export function FileCleaningPage() {
             { key: "row", header: "행", numeric: true, render: (row) => formatNumber(row.row) },
             { key: "field", header: "필드", render: (row) => row.field },
             { key: "before", header: "정제 전", render: (row) => <span className="compare-before">{row.before}</span> },
-            { key: "after", header: "정제 후", render: (row) => <span className="compare-after">{row.after}</span> },
+            {
+              key: "after",
+              header: "정제 후",
+              render: (row) => (
+                <span className={row.decision === "rejected" ? "compare-before" : "compare-after"}>
+                  {row.effectiveAfter}
+                  {row.decision === "rejected" ? <small className="compare-note">원본 유지</small> : null}
+                </span>
+              ),
+            },
             {
               key: "decision",
               header: "적용 여부",
-              render: (row) => {
-                const decision = cleaningDecision(fileId, row.ruleId);
-                return <span className={`pill decision-${decision}`}>{DECISION_LABEL[decision]}</span>;
-              },
+              render: (row) => (
+                <span className={`pill decision-${row.decision}`}>
+                  {applied && row.decision === "approved" ? "적용 완료" : DECISION_LABEL[row.decision]}
+                </span>
+              ),
             },
           ]}
         />
