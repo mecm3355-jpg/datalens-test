@@ -691,6 +691,72 @@ td.num {
   transition: border-color 160ms ease, background 160ms ease;
 }
 
+.upload-guide {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, var(--color-hairline-on-dark));
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface-card-dark));
+}
+
+.upload-guide-copy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.upload-guide-copy .body {
+  margin-top: var(--space-xxs);
+}
+
+.upload-guide-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.upload-guide-steps {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--color-muted-strong);
+  font-size: 12px;
+}
+
+.upload-guide-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.upload-guide-steps li > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-surface-elevated-dark);
+  color: var(--color-on-dark);
+  font-family: var(--font-plex);
+  font-size: 11px;
+}
+
 .upload-zone.is-dragging {
   border-color: var(--color-primary);
   background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-card-dark));
@@ -1141,6 +1207,16 @@ td.num {
   .cleaning-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .upload-guide {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .upload-guide-steps {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 @media (max-width: 960px) {
@@ -1201,6 +1277,12 @@ td.num {
 
   .upload-batch-meta .caption {
     grid-column: 2;
+  }
+
+  .upload-guide-steps {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-xs);
   }
 
   .footer {

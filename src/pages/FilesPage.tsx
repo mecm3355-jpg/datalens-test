@@ -90,6 +90,21 @@ export function FilesPage() {
         lede="원본 파일을 업로드하고 처리 상태, 정제 규칙, 분석 결과를 한곳에서 관리합니다."
       />
 
+      <aside className="upload-guide" aria-labelledby="upload-guide-title">
+        <div className="upload-guide-copy">
+          <span className="upload-guide-icon" aria-hidden="true">+</span>
+          <div>
+            <h2 className="title-sm" id="upload-guide-title">여러 파일을 한 번에 업로드할 수 있어요</h2>
+            <p className="body">파일 선택 창에서 Ctrl 또는 Shift를 누른 채 선택하거나, 여러 파일을 업로드 영역에 함께 끌어다 놓으세요.</p>
+          </div>
+        </div>
+        <ol className="upload-guide-steps" aria-label="다중 파일 업로드 방법">
+          <li><span>1</span>여러 파일 선택</li>
+          <li><span>2</span>파일별 처리 상태 확인</li>
+          <li><span>3</span>완료 후 상세·정제 확인</li>
+        </ol>
+      </aside>
+
       <label
         className={["upload-zone", isDragging ? "is-dragging" : ""].filter(Boolean).join(" ")}
         onDragEnter={() => setIsDragging(true)}
@@ -109,9 +124,9 @@ export function FilesPage() {
           }}
         />
         <span className="upload-kicker">파일 업로드</span>
-        <span className="title-sm">여기로 파일을 끌어오거나 직접 선택하세요</span>
-        <span className="caption">CSV, TSV, Excel, 문서, 이미지 · 파일당 최대 20MB</span>
-        <span className="btn btn-primary">파일 선택</span>
+        <span className="title-sm">파일 여러 개를 여기로 끌어오거나 직접 선택하세요</span>
+        <span className="caption">다중 선택 가능 · CSV, TSV, Excel, 문서, 이미지 · 파일당 최대 20MB</span>
+        <span className="btn btn-primary">여러 파일 선택</span>
       </label>
 
       {uploadFeedback ? (
