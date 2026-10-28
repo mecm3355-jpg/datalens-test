@@ -20,7 +20,7 @@ import type {
   ReviewItem,
 } from "../types";
 
-const STORAGE_KEY = "datalens-demo-workspace-v2";
+const STORAGE_KEY = "datalens-demo-workspace-v3";
 
 type ReviewState = {
   status: ReviewItem["status"];
