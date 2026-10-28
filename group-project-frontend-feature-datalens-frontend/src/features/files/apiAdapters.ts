@@ -195,7 +195,9 @@ export function toArtifact(
   const metrics = analysis.quality.metrics ?? {};
   const derived = statistics(analysis);
   return {
-    source: preview.kind === "table" ? "parsed" : "metadata",
+    // API 미리보기의 text 줄도 서버가 실제로 추출한 내용이다. metadata로 표시하면
+    // PDF가 정제 불가인 것처럼 잘못 안내되므로 모든 서버 미리보기를 parsed로 본다.
+    source: "parsed",
     truncated: (preview.rows?.length ?? preview.lines?.length ?? 0) >= preview.limit,
     rows,
     cleanedRows: cleanedPreview ? previewRows(cleanedPreview) : undefined,

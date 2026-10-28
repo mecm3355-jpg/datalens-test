@@ -98,8 +98,12 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
       const [preview, analysis, suggestions, versions] = await Promise.all([
         datalensApi.preview(fileId),
         datalensApi.analysis(fileId),
-        serverFile.category === "tabular" ? datalensApi.suggestions(fileId) : Promise.resolve([]),
-        serverFile.category === "tabular" ? datalensApi.versions(fileId) : Promise.resolve([]),
+        serverFile.processingCapabilities.cleaning
+          ? datalensApi.suggestions(fileId)
+          : Promise.resolve([]),
+        serverFile.processingCapabilities.cleaning
+          ? datalensApi.versions(fileId)
+          : Promise.resolve([]),
       ]);
       const latestCleaning = versions.find((version) => version.resultType === "cleaning");
       const cleanedPreview = latestCleaning
@@ -107,13 +111,20 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         : null;
       const artifact = toArtifact(preview, analysis, suggestions, cleanedPreview);
       setArtifacts((current) => ({ ...current, [fileId]: artifact }));
-      const appliedKeys = new Set((latestCleaning?.cleaning?.rules ?? []).map(cleanRuleKey));
-      setAppliedCleaning((current) => ({
-        ...current,
-        [fileId]: artifact.rules
-          .filter((rule) => rule.backendRule && appliedKeys.has(cleanRuleKey(rule.backendRule)))
-          .map((rule) => rule.id),
-      }));
+      setAppliedCleaning((current) => {
+        if (!latestCleaning) {
+          const next = { ...current };
+          delete next[fileId];
+          return next;
+        }
+        const appliedKeys = new Set(latestCleaning.cleaning?.rules?.map(cleanRuleKey) ?? []);
+        return {
+          ...current,
+          [fileId]: artifact.rules
+            .filter((rule) => rule.backendRule && appliedKeys.has(cleanRuleKey(rule.backendRule)))
+            .map((rule) => rule.id),
+        };
+      });
       patchFile(fileId, {
         rowCount: typeof analysis.analysis.rowCount === "number" ? analysis.analysis.rowCount : null,
         columns: Array.isArray(analysis.analysis.columns)

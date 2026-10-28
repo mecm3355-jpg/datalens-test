@@ -115,3 +115,15 @@ def test_profile_empty_docx(tmp_path: Path) -> None:
 
     [issue] = profile.quality.issues
     assert (issue.type, issue.severity) == ("no_text", "high")
+
+
+def test_profile_document_finds_whitespace_and_duplicate_lines(tmp_path: Path) -> None:
+    path = tmp_path / "doc"
+    path.write_bytes(make_docx(["  같은   문장", "같은 문장", "다른 문장"]))
+
+    with open_document(path, "docx") as document:
+        profile = profile_document(document)
+
+    issues = {issue.type: issue for issue in profile.quality.issues}
+    assert (issues["whitespace"].location, issues["whitespace"].count) == ("내용", 1)
+    assert (issues["duplicates"].location, issues["duplicates"].count) == ("내용", 1)

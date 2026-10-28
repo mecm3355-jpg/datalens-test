@@ -92,6 +92,7 @@ def get_cleaning_service(
         JobRepository(mongo.db),
         ResultRepository(mongo.db),
         create_storage(settings.storage_provider, settings.storage_root),
+        settings,
     )
 
 

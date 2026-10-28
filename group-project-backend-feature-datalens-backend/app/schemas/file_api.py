@@ -49,6 +49,10 @@ class FileDetail(ApiModel):
         파라미터:
             doc: files 컬렉션 문서
         """
+        capabilities = doc.processing_capabilities
+        # 기능 추가 전에 등록된 PDF/DOCX도 다시 업로드하지 않고 현재 정제를 쓸 수 있게 한다.
+        if doc.extension in {"pdf", "docx"} and not capabilities.cleaning:
+            capabilities = capabilities.model_copy(update={"cleaning": True})
         return cls(
             file_id=str(doc.id),
             # storage(서버 내부 경로)는 일부러 빼고 옮긴다. 경로가 노출되면 저장 구조가 드러난다
@@ -58,7 +62,7 @@ class FileDetail(ApiModel):
             category=doc.category,
             size_bytes=doc.size_bytes,
             status=doc.status,
-            processing_capabilities=doc.processing_capabilities,
+            processing_capabilities=capabilities,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
             # 프런트엔드가 이 ID로 바로 GET /jobs/{job_id}를 불러 진행 상황을 본다

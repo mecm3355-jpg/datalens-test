@@ -95,7 +95,7 @@ CAPABILITIES: dict[FileCategory, ProcessingCapabilities] = {
         preview=True, quality_check=True, cleaning=False, statistics=True, ai_summary=True
     ),
     "document": ProcessingCapabilities(
-        preview=True, quality_check=True, cleaning=False, statistics=False, ai_summary=True
+        preview=True, quality_check=True, cleaning=True, statistics=False, ai_summary=True
     ),
     "image": ProcessingCapabilities(
         preview=True, quality_check=True, cleaning=False, statistics=False, ai_summary=True

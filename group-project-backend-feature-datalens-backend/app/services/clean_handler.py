@@ -7,14 +7,21 @@ from pathlib import Path
 from pydantic import JsonValue
 
 from app.core.errors import AppError
-from app.processors.tabular import Table, open_table
+from app.processors.document import DOCUMENT_EXTENSIONS, OcrOptions
+from app.processors.tabular import Cell, Table, open_table
 from app.repositories.results import ResultRepository
 from app.schemas.cleaning import CleanRequest, CleanRule
 from app.schemas.result import ResultDocument
 from app.services.analyze_handler import build_profile
 from app.services.artifacts import cleaned_data_key, job_dir_key, job_params_key
 from app.services.cleaning import RuleChange, apply_rules, write_csv
+from app.services.document_cleaning import (
+    DOCUMENT_COLUMNS,
+    apply_document_rules,
+    read_document_rows,
+)
 from app.services.job_runner import JobContext
+from app.services.ocr_setup import ocr_options
 from app.services.profiling import Profile, profile_table
 from app.services.storage import LocalStorage
 
@@ -35,6 +42,7 @@ def run_cleaning(
     rules: list[CleanRule],
     storage: LocalStorage,
     artifact_key: str,
+    ocr: OcrOptions | None = None,
 ) -> CleaningOutcome:
     """원본을 읽어 규칙을 적용하고 산출물 CSV를 저장한 뒤 정제 전후를 진단한다. 스레드에서 실행한다.
 
@@ -45,13 +53,27 @@ def run_cleaning(
         storage: 산출물을 저장할 저장소
         artifact_key: 산출물 위치
     """
-    # 정제 전 진단은 원본 기준으로 다시 계산한다. 직전 analysis 결과가 없거나 오래됐을 수 있다
-    before = build_profile(source, extension)
-    # 중복 제거·결측 채우기(중앙값 등)는 전체 행을 봐야 하므로 행을 메모리에 모은다
-    with open_table(source, extension) as table:
-        columns = table.columns
-        rows = list(table.rows)
-    cleaned, changes = apply_rules(columns, rows, rules)
+    rows: list[list[Cell]]
+    if extension in DOCUMENT_EXTENSIONS:
+        # 문서는 추출 글자를 줄 번호와 내용 두 열의 가상 표로 바꿔 정제한다.
+        rows = read_document_rows(source, extension, ocr)
+        if not rows:
+            raise AppError(
+                "NO_EXTRACTED_TEXT",
+                "문서에서 정제할 글자를 추출하지 못했습니다. 스캔 PDF는 OCR 설정을 확인하세요.",
+                422,
+            )
+        columns = DOCUMENT_COLUMNS
+        before = profile_table(Table("csv", "utf-8-sig", None, columns, iter(rows)))
+        cleaned, changes = apply_document_rules(rows, rules)
+    else:
+        # 정제 전 진단은 원본 기준으로 다시 계산한다. 직전 analysis 결과가 없거나 오래됐을 수 있다
+        before = build_profile(source, extension)
+        # 중복 제거·결측 채우기(중앙값 등)는 전체 행을 봐야 하므로 행을 메모리에 모은다
+        with open_table(source, extension) as table:
+            columns = table.columns
+            rows = list(table.rows)
+        cleaned, changes = apply_rules(columns, rows, rules)
 
     # 임시 파일에 다 쓴 뒤 저장소로 옮긴다. 쓰다 실패해도 산출물 위치에 반쪽 파일이 남지 않는다
     temp = storage.new_temp_path()
@@ -131,7 +153,10 @@ async def clean(ctx: JobContext) -> None:
         raw = await asyncio.to_thread(ctx.storage.read_text, job_params_key(ctx.job.id))
         request = CleanRequest.model_validate_json(raw)
         # API에서 이미 막지만, 작업이 큐에 있는 동안 파일 상태가 바뀔 수 있어 다시 확인한다
-        if not ctx.file.processing_capabilities.cleaning:
+        if (
+            not ctx.file.processing_capabilities.cleaning
+            and ctx.file.extension not in DOCUMENT_EXTENSIONS
+        ):
             raise AppError(
                 "CLEANING_NOT_SUPPORTED", "이 파일 형식은 정제를 지원하지 않습니다.", 422
             )
@@ -146,7 +171,13 @@ async def clean(ctx: JobContext) -> None:
         artifact_key = cleaned_data_key(ctx.file.id, version)
         # 읽기·규칙 적용·CSV 쓰기는 모두 동기 작업이라 스레드에서 돌린다
         outcome = await asyncio.to_thread(
-            run_cleaning, source, ctx.file.extension, request.rules, ctx.storage, artifact_key
+            run_cleaning,
+            source,
+            ctx.file.extension,
+            request.rules,
+            ctx.storage,
+            artifact_key,
+            ocr_options(ctx.settings),
         )
 
         await ctx.report("saving", 90)

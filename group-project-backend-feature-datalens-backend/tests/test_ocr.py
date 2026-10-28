@@ -92,8 +92,10 @@ def test_low_confidence_lines_need_review(tmp_path: Path) -> None:
     with open_document(path, "pdf", OcrOptions(engine, dpi=72, low_confidence=0.6)) as document:
         profile = profile_document(document)
 
-    [issue] = profile.quality.issues
-    assert (issue.type, issue.count, issue.location) == ("low_ocr_confidence", 2, "page 1, 2")
+    issues = {issue.type: issue for issue in profile.quality.issues}
+    issue = issues["low_ocr_confidence"]
+    assert (issue.count, issue.location) == (2, "page 1, 2")
+    assert issues["duplicates"].count == 1
     assert profile.analysis["method"] == "ocr"
     assert profile.analysis["ocr"] == {
         "engine": "fake-ocr",

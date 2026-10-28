@@ -727,11 +727,22 @@ def profile_document(document: DocumentText) -> Profile:
     파라미터:
         document: open_document로 연 문서(lines를 이 함수가 끝까지 읽는다)
     """
-    line_count = characters = 0
+    line_count = characters = whitespace = duplicates = 0
+    seen_lines: set[str] = set()
     # lines를 끝까지 읽어야 PDF 페이지별 글자 유무·OCR 집계가 document에 채워진다
     for line in document.lines:
         line_count += 1
         characters += len(line.strip())
+        # PDF/OCR 추출 결과는 단어 사이 공백이 여러 칸이거나 들여쓰기가 남을 수 있다.
+        # 정규화한 값을 중복 키로 써, 공백만 다른 같은 문장도 중복으로 찾는다.
+        # DOCX 표의 탭(칸 경계)은 유지하고 각 칸 안의 공백만 정규화한다.
+        normalized = "\t".join(" ".join(part.split()) for part in line.split("\t"))
+        if normalized != line:
+            whitespace += 1
+        if normalized in seen_lines:
+            duplicates += 1
+        else:
+            seen_lines.add(normalized)
 
     # 이미지인데 OCR 엔진이 없으면 글자를 읽지 못한 것이지 글자가 없는 것이 아니다
     unread_image = document.image is not None and document.ocr_engine is None
@@ -771,6 +782,27 @@ def profile_document(document: DocumentText) -> Profile:
                 count=1,
                 location=None,
                 message="문서에서 추출된 글자가 없습니다.",
+            )
+        )
+
+    if whitespace:
+        issues.append(
+            QualityIssue(
+                type="whitespace",
+                severity="low",
+                count=whitespace,
+                location="내용",
+                message=f"추출한 문장 {whitespace}개에 불필요한 공백이 있습니다.",
+            )
+        )
+    if duplicates:
+        issues.append(
+            QualityIssue(
+                type="duplicates",
+                severity=_ratio_severity(duplicates / line_count, 0.2, 0.05),
+                count=duplicates,
+                location="내용",
+                message=f"중복 문장 {duplicates}개가 발견되었습니다.",
             )
         )
 

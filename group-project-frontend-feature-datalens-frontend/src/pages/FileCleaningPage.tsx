@@ -11,7 +11,8 @@ import { useWorkspace } from "../state/workspace";
 import type { CleaningPreviewRow } from "../types";
 
 function sameRuleSelection(left: string[] | null, right: Set<string>): boolean {
-  if (!left || left.length !== right.size) return false;
+  // 정제 버전이 없을 때의 빈 선택을 "0개 규칙 적용 완료"로 오인하지 않는다.
+  if (!left || left.length === 0 || left.length !== right.size) return false;
   return left.every((ruleId) => right.has(ruleId));
 }
 
@@ -201,7 +202,7 @@ export function FileCleaningPage() {
   return (
     <div className="page">
       <PageIntro
-        eyebrow={isApplied ? "정제 완료" : "정제 준비"}
+        eyebrow={isApplied ? "정제 완료" : rules.length === 0 ? "정제 불필요" : "정제 준비"}
         title={file.originalName}
         lede="적용할 규칙을 선택한 뒤 한 번만 정제를 실행하세요. 실행된 결과는 새로고침 후에도 유지됩니다."
         actions={
@@ -255,7 +256,11 @@ export function FileCleaningPage() {
         </div>
       ) : null}
       {artifact?.truncated ? (
-        <div className="feedback" role="note">브라우저 저장 용량을 위해 앞 1,000행만 데모 정제에 사용합니다.</div>
+        <div className="feedback" role="note">
+          {dataMode === "api"
+            ? `화면 비교는 서버 미리보기 앞 ${formatNumber(artifact.rows.length)}행만 표시하며, 정제 실행은 전체 데이터에 적용됩니다.`
+            : "브라우저 저장 용량을 위해 앞 1,000행만 데모 정제에 사용합니다."}
+        </div>
       ) : null}
       {downloadError ? <div className="feedback feedback-error" role="alert">{downloadError}</div> : null}
 
@@ -280,7 +285,11 @@ export function FileCleaningPage() {
         </div>
 
         {rules.length === 0 ? (
-          <p className="empty">이 파일에서 현재 선택할 수 있는 정제 규칙이 없습니다.</p>
+          <p className="empty">
+            {artifact?.qualityIssues?.some((issue) => issue.type === "no_text" || issue.type === "no_text_layer")
+              ? "추출된 텍스트가 없어 정제 규칙을 만들 수 없습니다. 스캔 PDF라면 OCR 설정을 확인해 주세요."
+              : "품질 진단에서 자동 정제할 문제가 발견되지 않았습니다. 원본을 그대로 사용할 수 있습니다."}
+          </p>
         ) : (
           <ul className="cleaning-rule-list">
             {rules.map((rule) => {

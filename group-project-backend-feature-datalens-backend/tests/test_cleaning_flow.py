@@ -9,6 +9,7 @@ import openpyxl
 from fastapi.testclient import TestClient
 
 from tests.conftest import requires_db
+from tests.document_files import make_pdf
 from tests.test_analyze_flow import run_worker, upload
 
 pytestmark = requires_db
@@ -156,6 +157,42 @@ def test_cleaning_not_supported_for_text(db_client: TestClient) -> None:
         f"/api/v1/files/{file_id}/clean", json={"rules": [{"type": "remove_duplicates"}]}
     )
     assert res.status_code == 422
+
+
+def test_pdf_text_can_be_cleaned_and_exported(db_client: TestClient) -> None:
+    """PDF 글자 층은 내용 기준 중복을 제거해 CSV 결과로 내려받을 수 있다."""
+    file_id = upload(
+        db_client,
+        "complaints.pdf",
+        make_pdf([["Street light broken", "Street light broken", "Road damaged"]]),
+    )
+    assert run_worker(db_client) == 1
+
+    detail = db_client.get(f"/api/v1/files/{file_id}").json()["data"]
+    assert detail["processingCapabilities"]["cleaning"] is True
+    suggested = db_client.post(f"/api/v1/files/{file_id}/cleaning-suggestions")
+    assert suggested.status_code == 200, suggested.text
+    rules = [item["rule"] for item in suggested.json()["data"]["suggestions"]]
+    assert {"type": "remove_duplicates"} in rules
+
+    started = db_client.post(f"/api/v1/files/{file_id}/clean", json={"rules": rules})
+    assert started.status_code == 202, started.text
+    assert run_worker(db_client) == 1
+
+    preview = db_client.get(f"/api/v1/files/{file_id}/cleaned-preview")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["data"]["columns"] == ["줄", "내용"]
+    assert preview.json()["data"]["rows"] == [
+        ["1", "Street light broken"],
+        ["3", "Road damaged"],
+    ]
+
+    exported = db_client.get(f"/api/v1/files/{file_id}/export", params={"format": "json"})
+    assert exported.status_code == 200
+    assert json.loads(exported.content) == [
+        {"줄": "1", "내용": "Street light broken"},
+        {"줄": "3", "내용": "Road damaged"},
+    ]
 
 
 def test_suggestions_require_analysis(db_client: TestClient) -> None:

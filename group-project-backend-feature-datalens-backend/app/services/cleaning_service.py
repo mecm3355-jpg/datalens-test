@@ -2,7 +2,9 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.core.config import Settings
 from app.core.errors import AppError
+from app.processors.document import DOCUMENT_EXTENSIONS
 from app.processors.tabular import open_table
 from app.repositories.files import FileRepository
 from app.repositories.jobs import JobRepository
@@ -14,8 +16,10 @@ from app.schemas.preview_api import FilePreview
 from app.schemas.result import ResultDocument, ResultType
 from app.services.artifacts import job_params_key
 from app.services.cleaning import check_columns
+from app.services.document_cleaning import check_document_rules, suggest_document_rules
 from app.services.export import MEDIA_TYPES, ExportFormat, convert
 from app.services.file_service import parse_file_id
+from app.services.ocr_setup import ocr_options
 from app.services.preview import build_preview
 from app.services.storage import LocalStorage
 from app.services.suggestions import Suggestion, suggest_rules
@@ -39,6 +43,9 @@ def check_rule_columns(path: Path, extension: str, rules: list[CleanRule]) -> No
         extension: 원본 확장자
         rules: 확인할 규칙
     """
+    if extension in DOCUMENT_EXTENSIONS:
+        check_document_rules(rules)
+        return
     # 머리글만 보고 rows는 읽지 않는다. 큰 파일도 API 요청 안에서 빠르게 검증할 수 있다
     with open_table(path, extension) as table:
         check_columns(table.columns, rules)
@@ -53,6 +60,7 @@ class CleaningService:
         jobs: JobRepository,
         results: ResultRepository,
         storage: LocalStorage,
+        settings: Settings,
     ) -> None:
         """서비스를 만든다.
 
@@ -66,6 +74,7 @@ class CleaningService:
         self._jobs = jobs
         self._results = results
         self._storage = storage
+        self._settings = settings
 
     async def _get_file(self, file_id: str) -> FileDocument:
         """파일을 찾는다. 없으면 404.
@@ -85,7 +94,7 @@ class CleaningService:
         파라미터:
             doc: 파일 문서
         """
-        if not doc.processing_capabilities.cleaning:
+        if not doc.processing_capabilities.cleaning and doc.extension not in DOCUMENT_EXTENSIONS:
             raise AppError(
                 "CLEANING_NOT_SUPPORTED", f"{doc.extension} 파일은 정제를 지원하지 않습니다.", 422
             )
@@ -104,6 +113,17 @@ class CleaningService:
             raise AppError(
                 "RESULT_NOT_FOUND", "진단 결과가 없습니다. 먼저 추출·진단을 실행하세요.", 404
             )
+        if doc.extension in DOCUMENT_EXTENSIONS:
+            source = self._storage.path(doc.storage.key)
+            if not source.is_file():
+                raise AppError("SOURCE_MISSING", "원본 파일이 저장소에 없습니다.", 409)
+            suggestions = await asyncio.to_thread(
+                suggest_document_rules,
+                source,
+                doc.extension,
+                ocr_options(self._settings),
+            )
+            return analysis, suggestions
         return analysis, suggest_rules(analysis)
 
     async def start_cleaning(self, file_id: str, request: CleanRequest) -> JobDocument:
