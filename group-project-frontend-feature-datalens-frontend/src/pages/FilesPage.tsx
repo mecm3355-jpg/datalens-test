@@ -5,7 +5,7 @@ import { PageIntro } from "../components/PageIntro";
 import { FILE_CATEGORY_LABEL, FILE_STATUS_LABEL } from "../lib/labels";
 import { formatBytes, formatDate, formatNumber } from "../lib/format";
 import { useWorkspace } from "../state/workspace";
-import type { FileCategory, FileStatus } from "../types";
+import type { DataFile, FileCategory, FileStatus } from "../types";
 
 const API_SUPPORTED_EXTENSIONS = new Set([
   "csv", "tsv", "json", "xlsx", "xls", "txt", "log", "docx", "pdf", "jpg", "jpeg", "png",
@@ -27,7 +27,7 @@ function fileExtension(name: string): string {
 }
 
 export function FilesPage() {
-  const { files, addFiles, dataMode, loading, workspaceError } = useWorkspace();
+  const { files, addFiles, deleteFile, dataMode, loading, workspaceError } = useWorkspace();
   const supportedExtensions = dataMode === "api" ? API_SUPPORTED_EXTENSIONS : DEMO_SUPPORTED_EXTENSIONS;
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -35,6 +35,7 @@ export function FilesPage() {
   const [uploadFeedback, setUploadFeedback] = useState<UploadFeedback>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [recentUploadIds, setRecentUploadIds] = useState<string[]>([]);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
 
   const filteredFiles = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
@@ -123,6 +124,29 @@ export function FilesPage() {
     void handleFiles([...event.dataTransfer.files]);
   };
 
+  const handleDelete = async (file: DataFile) => {
+    if (file.isUploading || deletingIds.has(file.id)) return;
+    if (!window.confirm(`'${file.originalName}' 파일과 관련 처리 결과를 모두 삭제할까요?`)) return;
+
+    setDeletingIds((current) => new Set(current).add(file.id));
+    try {
+      await deleteFile(file.id);
+      setRecentUploadIds((current) => current.filter((id) => id !== file.id));
+      setUploadFeedback({ tone: "success", message: `${file.originalName} 파일을 삭제했습니다.` });
+    } catch (error) {
+      setUploadFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : `${file.originalName} 파일을 삭제하지 못했습니다.`,
+      });
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        next.delete(file.id);
+        return next;
+      });
+    }
+  };
+
   const hasFilters = query.trim() !== "" || status !== "all" || category !== "all";
 
   return (
@@ -183,9 +207,13 @@ export function FilesPage() {
       {workspaceError ? <div className="feedback feedback-error" role="alert">{workspaceError}</div> : null}
 
       {uploadFeedback ? (
-        <div className={`feedback feedback-${uploadFeedback.tone}`} role="status" aria-live="polite">
+        <div
+          className={`feedback feedback-${uploadFeedback.tone}`}
+          role={uploadFeedback.tone === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
           <span>{uploadFeedback.message}</span>
-          <button type="button" onClick={() => setUploadFeedback(null)} aria-label="업로드 알림 닫기">
+          <button type="button" onClick={() => setUploadFeedback(null)} aria-label="알림 닫기">
             닫기
           </button>
         </div>
@@ -339,12 +367,26 @@ export function FilesPage() {
             {
               key: "action",
               header: "관리",
-              render: (file) => (
-                <div className="cluster">
-                  {file.isUploading ? <span className="caption">업로드 중</span> : <Link className="link" to={`/files/${file.id}`}>상세</Link>}
-                  {!file.isUploading && file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? <Link className="link" to={`/files/${file.id}/cleaning`}>정제</Link> : null}
-                </div>
-              ),
+              render: (file) => {
+                const isDeleting = deletingIds.has(file.id);
+                return (
+                  <div className="cluster">
+                    {file.isUploading ? <span className="caption">업로드 중</span> : <Link className="link" to={`/files/${file.id}`}>상세</Link>}
+                    {!file.isUploading && file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? <Link className="link" to={`/files/${file.id}/cleaning`}>정제</Link> : null}
+                    {!file.isUploading ? (
+                      <button
+                        className="btn btn-text btn-text-danger"
+                        type="button"
+                        disabled={isDeleting}
+                        aria-label={`${file.originalName} 삭제`}
+                        onClick={() => void handleDelete(file)}
+                      >
+                        {isDeleting ? "삭제 중" : "삭제"}
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              },
             },
           ]}
         />

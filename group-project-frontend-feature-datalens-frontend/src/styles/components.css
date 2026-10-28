@@ -311,6 +311,10 @@
   color: var(--color-body);
 }
 
+.btn-text-danger {
+  color: var(--color-danger);
+}
+
 .link {
   color: var(--color-primary);
   font-size: 14px;

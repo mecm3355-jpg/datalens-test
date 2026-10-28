@@ -139,7 +139,7 @@ function FileDetail({ fileId }: { fileId: string }) {
             >
               {file.status === "processing" ? "처리 중" : job?.status === "completed" ? "다시 분석" : file.status === "failed" ? "다시 시도" : "분석 실행"}
             </Button> : null}
-            <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting || file.status === "processing"}>
+            <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting}>
               {isDeleting ? "삭제 중" : "파일 삭제"}
             </Button>
           </>
