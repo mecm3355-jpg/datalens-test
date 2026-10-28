@@ -1,4 +1,8 @@
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { issueSignedToken } from "@vercel/blob";
+import {
+  handleUploadPresigned,
+  type HandleUploadPresignedBody,
+} from "@vercel/blob/client";
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const INCOMING_PATH = /^incoming\/[0-9a-f-]{36}-[^/]{1,120}$/iu;
@@ -25,11 +29,20 @@ async function authenticated(request: Request): Promise<boolean> {
     false,
     ["verify"],
   );
-  const signatureBytes = Uint8Array.from(signature.match(/.{1,2}/g) ?? [], (value) => Number.parseInt(value, 16));
-  const valid = await crypto.subtle.verify("HMAC", key, signatureBytes, new TextEncoder().encode(payload));
+  const signatureBytes = Uint8Array.from(signature.match(/.{1,2}/g) ?? [], (value) =>
+    Number.parseInt(value, 16),
+  );
+  const valid = await crypto.subtle.verify(
+    "HMAC",
+    key,
+    signatureBytes,
+    new TextEncoder().encode(payload),
+  );
   if (!valid) return false;
   try {
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp?: number };
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      exp?: number;
+    };
     return typeof parsed.exp === "number" && parsed.exp > Math.floor(Date.now() / 1000);
   } catch {
     return false;
@@ -42,29 +55,38 @@ async function handle(request: Request): Promise<Response> {
   }
 
   try {
-    if (!(await authenticated(request))) {
+    const body = (await request.json()) as HandleUploadPresignedBody;
+    if (body.type === "blob.generate-presigned-url" && !(await authenticated(request))) {
       return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
     }
-    const body = (await request.json()) as HandleUploadBody;
-    const result = await handleUpload({
+    const result = await handleUploadPresigned({
       request,
       body,
-      onBeforeGenerateToken: async (pathname) => {
+      getSignedToken: async (pathname) => {
         if (!INCOMING_PATH.test(pathname) || pathname.includes("..")) {
-          throw new Error("잘못된 업로드 경로입니다.");
+          throw new Error("올바르지 않은 업로드 경로입니다.");
         }
+        const validUntil = Date.now() + 10 * 60 * 1000;
         return {
-          addRandomSuffix: false,
-          allowOverwrite: false,
-          maximumSizeInBytes: MAX_UPLOAD_BYTES,
-          validUntil: Date.now() + 10 * 60 * 1000,
+          token: await issueSignedToken({
+            pathname,
+            operations: ["put"],
+            maximumSizeInBytes: MAX_UPLOAD_BYTES,
+            validUntil,
+          }),
+          urlOptions: {
+            addRandomSuffix: false,
+            allowOverwrite: false,
+            maximumSizeInBytes: MAX_UPLOAD_BYTES,
+            validUntil,
+          },
         };
       },
-      onUploadCompleted: async () => undefined,
     });
     return Response.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "업로드 토큰을 만들지 못했습니다.";
+    const message =
+      error instanceof Error ? error.message : "업로드 URL을 만들지 못했습니다.";
     return Response.json({ error: message }, { status: 400 });
   }
 }

@@ -1,6 +1,6 @@
 import { apiDownload, apiRequest, apiRoutes } from "./client";
 import { AppError } from "./AppError";
-import { upload as uploadToBlob } from "@vercel/blob/client";
+import { uploadPresigned as uploadToBlob } from "@vercel/blob/client";
 import type { FileCategory, FileStatus } from "../types";
 
 type ApiResponse<T> = {
