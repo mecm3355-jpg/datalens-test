@@ -103,8 +103,9 @@ export function FileCleaningPage() {
       };
     })
     .filter((row) => !applied || row.decision === "approved");
+  const changedComparisonRows = comparisonRows.filter((row) => row.before !== row.effectiveAfter);
   const visibleRows = showChangedOnly
-    ? comparisonRows.filter((row) => row.before !== row.effectiveAfter)
+    ? changedComparisonRows
     : comparisonRows;
 
   return (
@@ -220,8 +221,8 @@ export function FileCleaningPage() {
             <h2 className="title-sm" id="comparison-title">정제 전·후 비교</h2>
             <p className="caption">
               {applied
-                ? `승인되어 적용된 변경 ${formatNumber(comparisonRows.length)}개를 보여줍니다.`
-                : `규칙 검토 결과에 따른 변경 예정 항목 ${formatNumber(comparisonRows.length)}개를 보여줍니다.`}
+                ? `적용된 변경 ${formatNumber(changedComparisonRows.length)}개 · 전체 비교 ${formatNumber(comparisonRows.length)}개`
+                : `변경 예정 ${formatNumber(changedComparisonRows.length)}개 · 전체 비교 ${formatNumber(comparisonRows.length)}개`}
             </p>
           </div>
           <button
@@ -230,7 +231,7 @@ export function FileCleaningPage() {
             aria-pressed={showChangedOnly}
             onClick={() => setShowChangedOnly((current) => !current)}
           >
-            변경된 행만 보기
+            {showChangedOnly ? "전체 행 보기" : "변경된 행만 보기"}
           </button>
         </div>
         <DataTable
@@ -245,21 +246,29 @@ export function FileCleaningPage() {
             {
               key: "after",
               header: "정제 후",
-              render: (row) => (
-                <span className={row.decision === "rejected" ? "compare-before" : "compare-after"}>
-                  {row.effectiveAfter}
-                  {row.decision === "rejected" ? <small className="compare-note">원본 유지</small> : null}
-                </span>
-              ),
+              render: (row) => {
+                const unchanged = row.before === row.effectiveAfter;
+                return (
+                  <span className={row.decision === "rejected" || unchanged ? "compare-before" : "compare-after"}>
+                    {row.effectiveAfter}
+                    {row.decision === "rejected" || unchanged ? (
+                      <small className="compare-note">{row.decision === "rejected" ? "원본 유지" : "변경 없음"}</small>
+                    ) : null}
+                  </span>
+                );
+              },
             },
             {
               key: "decision",
               header: "적용 여부",
-              render: (row) => (
-                <span className={`pill decision-${row.decision}`}>
-                  {applied && row.decision === "approved" ? "적용 완료" : DECISION_LABEL[row.decision]}
-                </span>
-              ),
+              render: (row) => {
+                const unchanged = row.before === row.effectiveAfter;
+                return (
+                  <span className={`pill ${unchanged ? "decision-pending" : `decision-${row.decision}`}`}>
+                    {unchanged ? "변경 없음" : applied && row.decision === "approved" ? "적용 완료" : DECISION_LABEL[row.decision]}
+                  </span>
+                );
+              },
             },
           ]}
         />

@@ -951,6 +951,22 @@ export const cleaningPreviewByFile: Record<string, CleaningPreviewRow[]> = {
       after: "제외됨",
       ruleId: "remove-system-text",
     },
+    {
+      id: "clean-6",
+      row: 61,
+      field: "지역",
+      before: "포항시 남구",
+      after: "포항시 남구",
+      ruleId: "trim-whitespace",
+    },
+    {
+      id: "clean-7",
+      row: 72,
+      field: "신고상담내용",
+      before: "도로 파손으로 통행이 어렵습니다.",
+      after: "도로 파손으로 통행이 어렵습니다.",
+      ruleId: "trim-whitespace",
+    },
   ],
   "file-virtual": [
     {
@@ -967,6 +983,14 @@ export const cleaningPreviewByFile: Record<string, CleaningPreviewRow[]> = {
       field: "민원내용",
       before: "같은  어린이보호구역 횡단보도에 학원 차량이 다시 정차했습니다.",
       after: "같은 어린이보호구역 횡단보도에 학원 차량이 다시 정차했습니다.",
+      ruleId: "trim-whitespace",
+    },
+    {
+      id: "clean-virtual-3",
+      row: 46,
+      field: "지역",
+      before: "수청동",
+      after: "수청동",
       ruleId: "trim-whitespace",
     },
   ],
