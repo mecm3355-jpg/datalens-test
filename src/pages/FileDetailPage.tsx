@@ -14,14 +14,19 @@ import { FILE_STATUS_LABEL, MAPPING_FIELDS, SEVERITY_LABEL } from "../lib/labels
 import { useWorkspace } from "../state/workspace";
 import type { DataFile, JobStatus, MappingField } from "../types";
 
+type UploadedPreviewRow = {
+  id: string;
+  values: Record<string, string>;
+};
+
 export function FileDetailPage() {
   const { fileId = "" } = useParams();
   return <FileDetail key={fileId} fileId={fileId} />;
 }
 
 function FileDetail({ fileId }: { fileId: string }) {
-  const { files, analysisRequested, requestAnalysis } = useWorkspace();
-  const [retryRequested, setRetryRequested] = useState(false);
+  const { files, analysisRequested, requestAnalysis, retryFileProcessing, cleaningRows } = useWorkspace();
+  const [retryError, setRetryError] = useState<string | null>(null);
   const file = files.find((item) => item.id === fileId);
   if (!file) {
     return (
@@ -37,7 +42,23 @@ function FileDetail({ fileId }: { fileId: string }) {
   const job = jobByFileId(file.id);
   const requested = analysisRequested(file.id);
   const preview = complaintsByFile(file.id);
+  const uploadedPreview = cleaningRows(file.id).slice(0, 10).map((values, index) => ({
+    id: `uploaded-${index}`,
+    values,
+  }));
   const quality = qualityByFile[file.id] ?? [];
+  const processingError = file.processingError
+    ? { code: "DEMO_PROCESSING_FAILED", message: file.processingError }
+    : job?.error;
+
+  const retryProcessing = () => {
+    const started = retryFileProcessing(file.id);
+    if (started) {
+      setRetryError(null);
+      return;
+    }
+    setRetryError("원본 파일이 현재 브라우저 세션에 없습니다. 파일 목록에서 원본을 다시 선택해 주세요.");
+  };
 
   return (
     <div className="page">
@@ -52,35 +73,27 @@ function FileDetail({ fileId }: { fileId: string }) {
             ) : null}
             <Button
               onClick={() => {
-                requestAnalysis(file.id);
-                setRetryRequested(file.status === "failed");
+                if (file.status === "failed") {
+                  retryProcessing();
+                } else {
+                  requestAnalysis(file.id);
+                }
               }}
-              disabled={file.status === "processing" || retryRequested}
+              disabled={file.status === "processing"}
             >
-              {retryRequested ? "재시도 요청됨" : job?.status === "completed" ? "다시 분석" : file.status === "failed" ? "다시 시도" : "분석 실행"}
+              {file.status === "processing" ? "처리 중" : job?.status === "completed" ? "다시 분석" : file.status === "failed" ? "다시 시도" : "분석 실행"}
             </Button>
           </>
         }
       />
 
-      {job?.error ? (
+      {processingError ? (
         <article className="card error-card" role="alert">
           <p className="caption">실패</p>
-          <p className="error-code num">{job.error.code}</p>
-          <p className="body notice">{job.error.message}</p>
-          {retryRequested ? (
-            <p className="feedback feedback-success">재처리 요청을 대기열에 추가했습니다.</p>
-          ) : (
-            <Button
-              variant="secondary"
-              onClick={() => {
-                requestAnalysis(file.id);
-                setRetryRequested(true);
-              }}
-            >
-              처리 다시 시도
-            </Button>
-          )}
+          <p className="error-code num">{processingError.code}</p>
+          <p className="body notice">{processingError.message}</p>
+          <Button variant="secondary" onClick={retryProcessing}>처리 다시 시도</Button>
+          {retryError ? <p className="feedback feedback-error">{retryError}</p> : null}
         </article>
       ) : null}
 
@@ -121,44 +134,58 @@ function FileDetail({ fileId }: { fileId: string }) {
       <article className="card">
         <div className="card-head">
           <h2 className="title-sm">추출 미리보기</h2>
-          <span className="caption">앞 {formatNumber(preview.length)}건</span>
+          <span className="caption">앞 {formatNumber(uploadedPreview.length || preview.length)}건</span>
         </div>
-        <DataTable
-          framed={false}
-          rows={preview}
-          rowKey={(row) => row.id}
-          empty="추출 전입니다. 미리보기는 형식 검증 뒤에 표시됩니다."
-          columns={[
-            {
-              key: "id",
-              header: "민원",
-              render: (row) => (
-                <Link className="link" to={`/complaints/${row.id}`}>
-                  {row.id}
-                </Link>
-              ),
-            },
-            { key: "date", header: "접수일", numeric: true, render: (row) => formatDate(row.receivedAt) },
-            { key: "region", header: "지역", render: (row) => row.region ?? "—" },
-            {
-              key: "locator",
-              header: "위치",
-              numeric: true,
-              render: (row) => (row.sourceLocator.row ? `행 ${row.sourceLocator.row}` : `p.${row.sourceLocator.page}`),
-            },
-            {
-              key: "content",
-              header: "본문",
-              render: (row) => <span className="content-cell">{row.contentMasked}</span>,
-            },
-            {
-              key: "similarity",
-              header: "유사도",
-              numeric: true,
-              render: (row) => (row.similarity === null ? "—" : formatRatio(row.similarity)),
-            },
-          ]}
-        />
+        {uploadedPreview.length > 0 ? (
+          <DataTable<UploadedPreviewRow>
+            framed={false}
+            rows={uploadedPreview}
+            rowKey={(row) => row.id}
+            empty="읽을 수 있는 데이터가 없습니다."
+            columns={file.columns.slice(0, 6).map((column) => ({
+              key: column,
+              header: column,
+              render: (row) => <span className="content-cell">{row.values[column] || "—"}</span>,
+            }))}
+          />
+        ) : (
+          <DataTable
+            framed={false}
+            rows={preview}
+            rowKey={(row) => row.id}
+            empty="추출 전입니다. 미리보기는 형식 검증 뒤에 표시됩니다."
+            columns={[
+              {
+                key: "id",
+                header: "민원",
+                render: (row) => (
+                  <Link className="link" to={`/complaints/${row.id}`}>
+                    {row.id}
+                  </Link>
+                ),
+              },
+              { key: "date", header: "접수일", numeric: true, render: (row) => formatDate(row.receivedAt) },
+              { key: "region", header: "지역", render: (row) => row.region ?? "—" },
+              {
+                key: "locator",
+                header: "위치",
+                numeric: true,
+                render: (row) => (row.sourceLocator.row ? `행 ${row.sourceLocator.row}` : `p.${row.sourceLocator.page}`),
+              },
+              {
+                key: "content",
+                header: "본문",
+                render: (row) => <span className="content-cell">{row.contentMasked}</span>,
+              },
+              {
+                key: "similarity",
+                header: "유사도",
+                numeric: true,
+                render: (row) => (row.similarity === null ? "—" : formatRatio(row.similarity)),
+              },
+            ]}
+          />
+        )}
       </article>
     </div>
   );

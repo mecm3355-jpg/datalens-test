@@ -1124,6 +1124,10 @@ td.num {
   border-bottom: 1px solid var(--color-hairline-on-dark);
 }
 
+.cleaning-rule.is-unavailable {
+  opacity: 0.58;
+}
+
 .rule-main {
   display: flex;
   min-width: 0;
@@ -1135,6 +1139,44 @@ td.num {
   display: flex;
   flex: 0 0 auto;
   gap: var(--space-xs);
+}
+
+.rule-checkbox {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--space-xs);
+  min-width: 116px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-hairline-on-dark);
+  border-radius: var(--radius-md);
+  color: var(--color-body);
+  cursor: pointer;
+}
+
+.rule-checkbox:has(input:checked) {
+  border-color: var(--color-primary);
+  color: var(--color-on-dark);
+}
+
+.rule-checkbox:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.rule-checkbox:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.rule-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.rule-checkbox span {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .chip-btn.is-rejected {
@@ -1324,6 +1366,7 @@ td.num {
   }
 
   .rule-actions .chip-btn,
+  .rule-checkbox,
   .cleaning-apply-bar .btn {
     flex: 1;
   }

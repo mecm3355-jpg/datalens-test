@@ -39,6 +39,14 @@ export type CleaningPreviewRow = {
   ruleId: string;
 };
 
+export type DemoCleaningArtifact = {
+  rules: CleaningRule[];
+  preview: CleaningPreviewRow[];
+  rows: Array<Record<string, string>>;
+  truncated: boolean;
+  source: "parsed" | "metadata";
+};
+
 export type MappingField =
   | "content"
   | "receivedAt"
@@ -139,6 +147,7 @@ export type DataFile = {
   mapping: Partial<Record<string, MappingField>>;
   swappedAxes?: boolean;
   uploadProgress?: number;
+  processingError?: string;
 };
 
 export type Job = {
