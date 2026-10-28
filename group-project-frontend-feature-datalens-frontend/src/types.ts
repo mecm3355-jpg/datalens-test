@@ -190,6 +190,7 @@ export type DataFile = {
   mapping: Partial<Record<string, MappingField>>;
   swappedAxes?: boolean;
   uploadProgress?: number;
+  isUploading?: boolean;
   processingError?: string;
 };
 

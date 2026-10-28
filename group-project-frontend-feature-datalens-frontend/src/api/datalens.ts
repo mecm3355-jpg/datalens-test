@@ -29,6 +29,14 @@ export type ApiFile = {
   lastJobId: string | null;
 };
 
+export type ApiFileUploadResult = {
+  fileId: string;
+  originalName: string;
+  fileType: string;
+  status: FileStatus;
+  message: string;
+};
+
 export type ApiJob = {
   jobId: string;
   fileId: string;
@@ -232,7 +240,7 @@ export const datalensApi = {
   async getFile(fileId: string): Promise<ApiFile> {
     return unwrap(await apiRequest<ApiResponse<ApiFile>>(apiRoutes.file(fileId)));
   },
-  async upload(file: File): Promise<{ fileId: string }> {
+  async upload(file: File): Promise<ApiFileUploadResult> {
     if (import.meta.env.VITE_UPLOAD_MODE === "blob") {
       // Blob presigned tokens compare the storage pathname byte-for-byte. Keeping
       // non-ASCII characters here can produce a differently encoded token scope,
@@ -245,7 +253,7 @@ export const datalensApi = {
         multipart: file.size > 5 * 1024 * 1024,
       });
       return unwrap(
-        await apiRequest<ApiResponse<{ fileId: string }>>(apiRoutes.filesFromBlob, {
+        await apiRequest<ApiResponse<ApiFileUploadResult>>(apiRoutes.filesFromBlob, {
           method: "POST",
           data: { pathname: blob.pathname, originalName: file.name },
         }),
@@ -254,7 +262,7 @@ export const datalensApi = {
     const form = new FormData();
     form.append("file", file);
     return unwrap(
-      await apiRequest<ApiResponse<{ fileId: string }>>(apiRoutes.files, {
+      await apiRequest<ApiResponse<ApiFileUploadResult>>(apiRoutes.files, {
         method: "POST",
         data: form,
       }),

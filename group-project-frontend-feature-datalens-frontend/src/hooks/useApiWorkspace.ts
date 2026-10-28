@@ -7,7 +7,14 @@ import type { CleaningRule, DataFile, DemoCleaningArtifact } from "../types";
 const POLL_INTERVAL_MS = 1_500;
 const MAX_POLL_ATTEMPTS = 1_200;
 
-export type UploadResult = { id: string; success: boolean; error?: string };
+export type UploadResult = {
+  id: string;
+  originalName: string;
+  success: boolean;
+  unsupported?: boolean;
+  message?: string;
+  error?: string;
+};
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -179,6 +186,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
       columns: [],
       mapping: {},
       uploadProgress: 0,
+      isUploading: true,
     }));
     setFiles((current) => [...optimistic, ...current]);
 
@@ -198,14 +206,25 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
               patchFile(serverFile.fileId, { processingError: messageOf(pollError) });
             });
         }
-        return { id: serverFile.fileId, success: true };
+        return {
+          id: serverFile.fileId,
+          originalName: serverFile.originalName,
+          success: true,
+          unsupported: serverFile.category === "other",
+          message: uploaded.message,
+        };
       } catch (uploadError) {
         patchFile(temporaryId, {
           status: "failed",
           uploadProgress: 0,
           processingError: messageOf(uploadError),
         });
-        return { id: temporaryId, success: false, error: messageOf(uploadError) };
+        return {
+          id: temporaryId,
+          originalName: file.name,
+          success: false,
+          error: messageOf(uploadError),
+        };
       }
     }));
     return ids;

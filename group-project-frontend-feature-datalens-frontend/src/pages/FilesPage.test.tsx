@@ -41,11 +41,29 @@ describe("FilesPage", () => {
 
     expect((await screen.findAllByText("records.json")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("service.log").length).toBeGreaterThan(0);
-    await waitFor(() => expect(screen.getByText("2개 파일을 업로드 대기열에 추가했습니다.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("2개 파일 등록 완료")).toBeInTheDocument());
     await waitFor(() => {
       const progress = screen.getAllByRole("progressbar");
       expect(progress).toHaveLength(2);
       expect(progress.every((item) => item.getAttribute("aria-valuenow") === "100")).toBe(true);
     }, { timeout: 3000 });
+  });
+
+  it("알 수 없는 형식은 기다리지 않도록 메타데이터만 등록된다고 안내한다", async () => {
+    render(
+      <MemoryRouter>
+        <WorkspaceProvider>
+          <FilesPage />
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    const unknown = new File(["unknown-format"], "archive.xyz", { type: "application/octet-stream" });
+
+    fireEvent.change(input as HTMLInputElement, { target: { files: [unknown] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/1개는 내용 분석 미지원\(메타데이터만 저장\): archive\.xyz/)).toBeInTheDocument();
+    });
   });
 });

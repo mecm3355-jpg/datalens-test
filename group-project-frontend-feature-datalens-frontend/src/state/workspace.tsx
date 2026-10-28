@@ -211,7 +211,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           fileHandles.current.set(dataFile.id, original);
           void processFile(dataFile.id, original, index * 120);
         });
-        return next.map((file) => ({ id: file.id, success: true }));
+        return next.map((file) => ({
+          id: file.id,
+          originalName: file.originalName,
+          success: true,
+          unsupported: file.fileCategory === "other",
+          message: file.fileCategory === "other"
+            ? "파일이 등록되었습니다. 이 형식은 내용 분석을 지원하지 않습니다."
+            : "파일이 등록되었습니다.",
+        }));
       },
       retryFileProcessing: async (fileId) => {
         if (DATA_MODE === "api") return api.retryFileProcessing(fileId);

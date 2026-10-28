@@ -66,6 +66,7 @@ function FileDetail({ fileId }: { fileId: string }) {
     values,
   }));
   const analysis = cleaningArtifact(file.id)?.analysis;
+  const analysisUnsupported = file.analysisSupported === false || file.fileCategory === "other";
   const quality = cleaningArtifact(file.id)?.qualityIssues ?? qualityByFile[file.id] ?? [];
   const processingError = file.processingError
     ? { code: dataMode === "api" ? "SERVER_PROCESSING_FAILED" : "DEMO_PROCESSING_FAILED", message: file.processingError }
@@ -103,7 +104,7 @@ function FileDetail({ fileId }: { fileId: string }) {
             {file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? (
               <Button variant="secondary" to={`/files/${file.id}/cleaning`}>정제 결과</Button>
             ) : null}
-            <Button
+            {!analysisUnsupported ? <Button
               onClick={() => {
                 if (file.status === "failed") {
                   void retryProcessing();
@@ -116,7 +117,7 @@ function FileDetail({ fileId }: { fileId: string }) {
               disabled={file.status === "processing"}
             >
               {file.status === "processing" ? "처리 중" : job?.status === "completed" ? "다시 분석" : file.status === "failed" ? "다시 시도" : "분석 실행"}
-            </Button>
+            </Button> : null}
             <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting || file.status === "processing"}>
               {isDeleting ? "삭제 중" : "파일 삭제"}
             </Button>
@@ -127,8 +128,8 @@ function FileDetail({ fileId }: { fileId: string }) {
       <article className="card">
         <div className="card-head">
           <h2 className="title-sm">파일 메타데이터</h2>
-          <span className={`pill ${analysis?.supported === false ? "pill-pending" : ""}`}>
-            {analysis?.supported === false ? "내용 분석 미지원" : analysis ? "분석 가능" : "분석 결과 대기"}
+          <span className={`pill ${analysisUnsupported ? "pill-pending" : ""}`}>
+            {analysisUnsupported ? "내용 분석 미지원" : analysis ? "분석 가능" : "분석 결과 대기"}
           </span>
         </div>
         <dl className="attr-grid notice">
@@ -141,6 +142,18 @@ function FileDetail({ fileId }: { fileId: string }) {
         </dl>
       </article>
 
+      {analysisUnsupported ? (
+        <article className="card" role="status">
+          <div className="card-head">
+            <h2 className="title-sm">내용 분석을 지원하지 않는 형식입니다</h2>
+            <span className="pill pill-pending">메타데이터만</span>
+          </div>
+          <p className="body notice">
+            원본 파일과 기본 정보는 안전하게 등록되었습니다. 이 형식은 미리보기·품질 진단·정제·AI 리포트를 제공하지 않으므로 별도의 처리를 기다릴 필요가 없습니다.
+          </p>
+        </article>
+      ) : null}
+
       {processingError ? (
         <article className="card error-card" role="alert">
           <p className="caption">실패</p>
@@ -151,7 +164,7 @@ function FileDetail({ fileId }: { fileId: string }) {
         </article>
       ) : null}
 
-      <article className="card">
+      {!analysisUnsupported ? <article className="card">
         <div className="card-head">
           <h2 className="title-sm">작업 단계</h2>
           {job ? <span className="num">{job.progress}%</span> : null}
@@ -161,7 +174,7 @@ function FileDetail({ fileId }: { fileId: string }) {
         {!job && !requested ? <p className="empty">아직 분석 작업이 없습니다.</p> : null}
         {requested && job ? <p className="notice">같은 파일로 새 분석 작업을 대기열에 넣었습니다.</p> : null}
         {requested && !job ? <p className="notice">분석 작업을 대기열에 넣었습니다.</p> : null}
-      </article>
+      </article> : null}
 
       {quality.length > 0 ? (
         <article className="card">
@@ -236,7 +249,7 @@ function FileDetail({ fileId }: { fileId: string }) {
 
       {file.columns.length > 0 ? <MappingCard file={file} /> : null}
 
-      <article className="card">
+      {!analysisUnsupported ? <article className="card">
         <div className="card-head">
           <h2 className="title-sm">추출 미리보기</h2>
           <span className="caption">앞 {formatNumber(uploadedPreview.length || preview.length)}건</span>
@@ -291,7 +304,7 @@ function FileDetail({ fileId }: { fileId: string }) {
             ]}
           />
         )}
-      </article>
+      </article> : null}
     </div>
   );
 }

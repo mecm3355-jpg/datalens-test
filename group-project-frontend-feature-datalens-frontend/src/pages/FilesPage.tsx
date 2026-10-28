@@ -21,6 +21,11 @@ type StatusFilter = "all" | FileStatus;
 type CategoryFilter = "all" | FileCategory;
 type UploadFeedback = { tone: "success" | "error"; message: string } | null;
 
+/** 파일명에서 마지막 확장자를 소문자로 꺼내 지원 여부 안내에 사용합니다. */
+function fileExtension(name: string): string {
+  return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
 export function FilesPage() {
   const { files, addFiles, dataMode, loading, workspaceError } = useWorkspace();
   const supportedExtensions = dataMode === "api" ? API_SUPPORTED_EXTENSIONS : DEMO_SUPPORTED_EXTENSIONS;
@@ -64,29 +69,51 @@ export function FilesPage() {
     }
 
     if (accepted.length > 0) {
+      const expectedUnsupported = accepted.filter(
+        (file) => !supportedExtensions.has(fileExtension(file.name)),
+      );
+      if (expectedUnsupported.length > 0) {
+        setUploadFeedback({
+          tone: "success",
+          message: `${expectedUnsupported.map((file) => file.name).join(", ")}: 내용 분석을 지원하지 않는 형식입니다. 원본과 기본 정보만 등록합니다.`,
+        });
+      }
       const results = await addFiles(accepted);
       setRecentUploadIds(results.map((result) => result.id));
       const failed = results.filter((result) => !result.success);
-      if (failed.length > 0) {
-        setUploadFeedback({
-          tone: "error",
-          message: `${results.length - failed.length}개 업로드 성공 · ${failed.length}개 실패. ${failed
-            .map((result) => result.error ?? "알 수 없는 오류")
-            .join(" · ")}`,
-        });
-        return;
+      const unsupported = results.filter((result) => result.success && result.unsupported);
+      const registered = results.length - failed.length;
+      const messages = [`${registered}개 파일 등록 완료`];
+      if (unsupported.length > 0) {
+        messages.push(
+          `${unsupported.length}개는 내용 분석 미지원(메타데이터만 저장): ${unsupported
+            .map((result) => result.originalName)
+            .join(", ")}`,
+        );
       }
+      if (failed.length > 0) {
+        messages.push(
+          `${failed.length}개 실패: ${failed
+            .map((result) => `${result.originalName} - ${result.error ?? "알 수 없는 오류"}`)
+            .join(" · ")}`,
+        );
+      }
+      if (rejected.length > 0) {
+        messages.push(`${rejected.length}개 제외: ${rejected.join(" · ")}`);
+      }
+      setUploadFeedback({
+        tone: failed.length > 0 || rejected.length > 0 ? "error" : "success",
+        message: messages.join(" · "),
+      });
+      return;
     }
     if (rejected.length > 0) {
-      setUploadFeedback({
-        tone: "error",
-        message: `${accepted.length}개 파일을 추가했고, ${rejected.length}개는 제외했습니다. ${rejected.join(" · ")}`,
-      });
+      setUploadFeedback({ tone: "error", message: `${rejected.length}개 파일을 제외했습니다. ${rejected.join(" · ")}` });
       return;
     }
     setUploadFeedback({
       tone: "success",
-      message: `${accepted.length}개 파일을 업로드 대기열에 추가했습니다.`,
+      message: "선택한 파일이 없습니다.",
     });
   };
 
@@ -183,6 +210,9 @@ export function FilesPage() {
                     <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
                     <span className="caption num">{progress}%</span>
                   </div>
+                  {file.analysisSupported === false ? (
+                    <p className="caption">내용 분석 미지원 · 원본과 메타데이터만 등록됨</p>
+                  ) : null}
                   <div
                     className="upload-progress"
                     role="progressbar"
@@ -265,9 +295,15 @@ export function FilesPage() {
               key: "name",
               header: "파일",
               render: (file) => (
-                <Link className="link file-name-link" to={`/files/${file.id}`}>
-                  {file.originalName}
-                </Link>
+                file.isUploading ? (
+                  <span className="file-name-link" aria-label={`${file.originalName} 업로드 중`}>
+                    {file.originalName}
+                  </span>
+                ) : (
+                  <Link className="link file-name-link" to={`/files/${file.id}`}>
+                    {file.originalName}
+                  </Link>
+                )
               ),
             },
             {
@@ -276,7 +312,7 @@ export function FilesPage() {
               render: (file) => (
                 <span>
                   {file.extension.toUpperCase() || "UNKNOWN"} · {FILE_CATEGORY_LABEL[file.fileCategory]}
-                  {!supportedExtensions.has(file.extension) ? <small className="support-note">메타데이터만</small> : null}
+                  {file.analysisSupported === false ? <small className="support-note">분석 미지원 · 메타데이터만</small> : null}
                 </span>
               ),
             },
@@ -305,8 +341,8 @@ export function FilesPage() {
               header: "관리",
               render: (file) => (
                 <div className="cluster">
-                  <Link className="link" to={`/files/${file.id}`}>상세</Link>
-                  {file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? <Link className="link" to={`/files/${file.id}/cleaning`}>정제</Link> : null}
+                  {file.isUploading ? <span className="caption">업로드 중</span> : <Link className="link" to={`/files/${file.id}`}>상세</Link>}
+                  {!file.isUploading && file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? <Link className="link" to={`/files/${file.id}/cleaning`}>정제</Link> : null}
                 </div>
               ),
             },
