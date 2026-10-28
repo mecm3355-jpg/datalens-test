@@ -186,7 +186,7 @@ export function FileCleaningPage() {
               }
             }}
           >
-            {allSelectableRulesSelected ? "전체 선택 해제" : "추천 규칙 전체 선택"}
+            {allSelectableRulesSelected ? "전체 규칙 선택 해제" : "전체 규칙 선택"}
           </button>
         </div>
 
