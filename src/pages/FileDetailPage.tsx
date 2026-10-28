@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
@@ -25,7 +25,7 @@ export function FileDetailPage() {
 }
 
 function FileDetail({ fileId }: { fileId: string }) {
-  const { files, analysisRequested, requestAnalysis, retryFileProcessing, cleaningRows } = useWorkspace();
+  const { files, analysisRequested, requestAnalysis, retryFileProcessing, cleaningRows, cleaningArtifact } = useWorkspace();
   const [retryError, setRetryError] = useState<string | null>(null);
   const file = files.find((item) => item.id === fileId);
   if (!file) {
@@ -46,6 +46,7 @@ function FileDetail({ fileId }: { fileId: string }) {
     id: `uploaded-${index}`,
     values,
   }));
+  const analysis = cleaningArtifact(file.id)?.analysis;
   const quality = qualityByFile[file.id] ?? [];
   const processingError = file.processingError
     ? { code: "DEMO_PROCESSING_FAILED", message: file.processingError }
@@ -68,7 +69,7 @@ function FileDetail({ fileId }: { fileId: string }) {
         lede={`${formatBytes(file.sizeBytes)} · ${file.rowCount === null ? "행 수 없음" : `${formatNumber(file.rowCount)}행`} · ${formatDate(file.createdAt)}`}
         actions={
           <>
-            {file.status === "completed" ? (
+            {file.status === "completed" && file.analysisSupported !== false ? (
               <Button variant="secondary" to={`/files/${file.id}/cleaning`}>정제 결과</Button>
             ) : null}
             <Button
@@ -86,6 +87,23 @@ function FileDetail({ fileId }: { fileId: string }) {
           </>
         }
       />
+
+      <article className="card">
+        <div className="card-head">
+          <h2 className="title-sm">파일 메타데이터</h2>
+          <span className={`pill ${analysis?.supported === false ? "pill-pending" : ""}`}>
+            {analysis?.supported === false ? "내용 분석 미지원" : analysis ? "분석 가능" : "분석 결과 대기"}
+          </span>
+        </div>
+        <dl className="attr-grid notice">
+          <div className="attr"><dt>실제 형식</dt><dd>{analysis?.detectedFormat ?? file.extension.toUpperCase()}</dd></div>
+          <div className="attr"><dt>MIME 유형</dt><dd>{file.mimeType ?? "등록 정보 없음"}</dd></div>
+          <div className="attr"><dt>파일 크기</dt><dd className="num">{formatBytes(file.sizeBytes)}</dd></div>
+          <div className="attr"><dt>등록일</dt><dd className="num">{formatDate(file.createdAt)}</dd></div>
+          <div className="attr"><dt>저장 위치</dt><dd>{file.storageLocation ?? "데모 저장소"}</dd></div>
+          <div className="attr"><dt>레코드</dt><dd className="num">{file.rowCount === null ? "—" : formatNumber(file.rowCount)}</dd></div>
+        </dl>
+      </article>
 
       {processingError ? (
         <article className="card error-card" role="alert">
@@ -127,6 +145,57 @@ function FileDetail({ fileId }: { fileId: string }) {
             ]}
           />
         </article>
+      ) : null}
+
+      {analysis?.quality ? (
+        <>
+          <section className="stat-row" aria-label="데이터 품질 점수">
+            <QualityStat label="종합 품질" value={`${analysis.quality.score}점`} />
+            <QualityStat label="완전성" value={`${analysis.quality.completeness}%`} />
+            <QualityStat label="유일성" value={`${analysis.quality.uniqueness}%`} />
+            <QualityStat label="유효성" value={`${analysis.quality.validity}%`} />
+            <QualityStat label="일관성" value={`${analysis.quality.consistency}%`} />
+          </section>
+          <p className="caption">종합 점수 기준: 완전성 35% · 유일성 25% · 유효성 20% · 일관성 20%</p>
+        </>
+      ) : null}
+
+      {analysis && (analysis.numericSummaries.length > 0 || analysis.frequencies.length > 0 || analysis.textStats || analysis.imageMetadata) ? (
+        <section className="split">
+          <article className="card">
+            <div className="card-head"><h2 className="title-sm">계산 통계</h2><span className="pill">브라우저 계산</span></div>
+            {analysis.numericSummaries.length > 0 ? (
+              <DataTable
+                framed={false}
+                rows={analysis.numericSummaries}
+                rowKey={(row) => row.field}
+                empty="수치형 열이 없습니다."
+                columns={[
+                  { key: "field", header: "열", render: (row) => row.field },
+                  { key: "average", header: "평균", numeric: true, render: (row) => row.average.toFixed(2) },
+                  { key: "minimum", header: "최솟값", numeric: true, render: (row) => formatNumber(row.minimum) },
+                  { key: "maximum", header: "최댓값", numeric: true, render: (row) => formatNumber(row.maximum) },
+                ]}
+              />
+            ) : analysis.textStats ? (
+              <dl className="attr-grid notice">
+                <div className="attr"><dt>줄</dt><dd className="num">{formatNumber(analysis.textStats.lines)}</dd></div>
+                <div className="attr"><dt>단어</dt><dd className="num">{formatNumber(analysis.textStats.words)}</dd></div>
+                <div className="attr"><dt>문자</dt><dd className="num">{formatNumber(analysis.textStats.characters)}</dd></div>
+              </dl>
+            ) : analysis.imageMetadata ? (
+              <p className="body">이미지 해상도: <span className="num">{analysis.imageMetadata.width ?? "—"} × {analysis.imageMetadata.height ?? "—"}</span></p>
+            ) : <p className="empty">계산 가능한 통계가 없습니다.</p>}
+          </article>
+          <article className="card">
+            <div className="card-head"><h2 className="title-sm">값 빈도</h2></div>
+            {analysis.frequencies.length > 0 ? (
+              <ol className="frequency-list">
+                {analysis.frequencies.map((item) => <li key={item.value}><span>{item.value}</span><span className="num">{formatNumber(item.count)}</span></li>)}
+              </ol>
+            ) : <p className="empty">반복되는 범주형 값이 없습니다.</p>}
+          </article>
+        </section>
       ) : null}
 
       {file.columns.length > 0 ? <MappingCard file={file} /> : null}
@@ -189,6 +258,11 @@ function FileDetail({ fileId }: { fileId: string }) {
       </article>
     </div>
   );
+}
+
+/** 품질 지표 이름과 백분율 값을 동일한 카드 형식으로 표시합니다. */
+function QualityStat({ label, value }: { label: string; value: string }) {
+  return <article className="stat"><p className="stat-label">{label}</p><p className="stat-value">{value}</p></article>;
 }
 
 function StageTrack({ status, stage }: { status: JobStatus; stage: string }) {

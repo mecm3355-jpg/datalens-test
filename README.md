@@ -1,18 +1,38 @@
-# React + Vite
+# DataLens Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+파일 업로드, 데이터 품질 분석, 정제 규칙 승인 및 결과 다운로드 흐름을 제공하는 React 프론트엔드입니다. 현재 파일 처리는 브라우저 기반 데모이며 실제 저장소, 작업 큐, AI 분석은 백엔드 연결 단계에서 대체할 수 있도록 구성되어 있습니다.
 
-Currently, two official plugins are available:
+## 기술 구성
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 19 + React Compiler
+- React Router 8
+- Vite 8 + TypeScript 6
+- Axios, Recharts
+- Oxlint + ESLint
+- Vitest + Testing Library
 
-## React Compiler
+## 실행
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev
+```
 
-## Expanding the Oxlint configuration
+개발 서버는 `http://localhost:5173`을 사용합니다.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## 검증
 
-# datalens_test
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+## 프로젝트 지침
+
+- 제품 요구사항: `PRD.md`
+- 개발 지침: `CLAUDE.md`
+- 디자인 시스템: `DESIGN.md`
+
+환경 변수는 `.env*` 파일에 보관하며 Git에 커밋하지 않습니다.

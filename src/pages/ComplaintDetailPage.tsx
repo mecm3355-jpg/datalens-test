@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { PageIntro } from "../components/PageIntro";
 import { categoryById, complaintById, files, issueById } from "../data/mock";

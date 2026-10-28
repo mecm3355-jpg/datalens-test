@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router";
 import { AppShell } from "./components/AppShell";
 import { CandidatesPage } from "./pages/CandidatesPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
@@ -18,13 +18,15 @@ import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { SessionProvider } from "./state/session";
 import { WorkspaceProvider } from "./state/workspace";
+import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 
 export function App() {
   return (
     <BrowserRouter>
       <SessionProvider>
-      <WorkspaceProvider>
-        <Routes>
+        <WorkspaceProvider>
+          <RouteErrorBoundary>
+            <Routes>
           <Route path="login" element={<LoginPage />} />
           <Route path="signup" element={<SignupPage />} />
           <Route element={<AppShell />}>
@@ -43,8 +45,9 @@ export function App() {
             <Route path="complaints/:complaintId" element={<ComplaintDetailPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
-        </Routes>
-      </WorkspaceProvider>
+            </Routes>
+          </RouteErrorBoundary>
+        </WorkspaceProvider>
       </SessionProvider>
     </BrowserRouter>
   );

@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import { categoryById, complaints, isPriority } from "../data/mock";

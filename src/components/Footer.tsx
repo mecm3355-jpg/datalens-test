@@ -1,14 +1,11 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router";
 
 const quickLinks = [
   { to: "/", label: "대시보드" },
   { to: "/files", label: "파일" },
-  { to: "/categories", label: "카테고리" },
-  { to: "/reviews", label: "검토" },
-  { to: "/issues", label: "이슈" },
-  { to: "/complaints", label: "민원" },
-  { to: "/data", label: "데이터" },
+  { to: "/data", label: "분석 리포트" },
+  { to: "/about", label: "서비스 소개" },
 ];
 
 const communityLinks: { label: string; to?: string }[] = [
@@ -57,8 +54,7 @@ export function Footer() {
           <div className="footer-brand">
             <p className="footer-logo">DataLens</p>
             <p className="footer-desc">
-              데이터렌즈는 민원 동향과 카테고리를 한 화면에서 보고 정리할 수 있게 만든 분석
-              화면입니다.
+              DataLens는 여러 형식의 파일을 수집하고 품질을 진단해, 승인한 규칙으로 안전하게 정제하는 데이터 작업공간입니다.
             </p>
             <div className="footer-social" aria-label="소셜 미디어">
               <SocialButton label="Facebook">

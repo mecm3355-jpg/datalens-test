@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import { categoryById, issues } from "../data/mock";

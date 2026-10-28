@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 import { useSession } from "../state/session";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -30,7 +30,7 @@ export function SignupPage() {
         <section className="signup-promo" aria-label="가입 안내">
           <h1 className="signup-hero">
             <span className="signup-hero-line">
-              한눈에 보는 <span className="signup-hero-accent">민원 동향</span>
+              한눈에 보는 <span className="signup-hero-accent">데이터 품질</span>
             </span>
             <span className="signup-hero-line">분석 시작</span>
           </h1>
@@ -38,15 +38,15 @@ export function SignupPage() {
           <ul className="signup-stats">
             <li>
               <StatIcon kind="users" />
-              <span>대표 민원과 속성 6종을 한 화면에서 봅니다.</span>
+              <span>여러 파일과 처리 상태를 한 화면에서 봅니다.</span>
             </li>
             <li>
               <StatIcon kind="rank" />
-              <span>카테고리별 건수와 전월 대비 증감</span>
+              <span>완전성·유일성·유효성·일관성 지표</span>
             </li>
             <li>
               <StatIcon kind="fund" />
-              <span>샘플 데이터로 바로 둘러볼 수 있습니다.</span>
+              <span>정제 전후 결과를 비교하고 내려받습니다.</span>
             </li>
           </ul>
         </section>

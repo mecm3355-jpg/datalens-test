@@ -1,5 +1,5 @@
 import { useMemo, useState, type DragEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import { FILE_CATEGORY_LABEL, FILE_STATUS_LABEL } from "../lib/labels";
@@ -7,8 +7,7 @@ import { formatBytes, formatDate, formatNumber } from "../lib/format";
 import { useWorkspace } from "../state/workspace";
 import type { FileCategory, FileStatus } from "../types";
 
-const ACCEPT = ".csv,.tsv,.xlsx,.xls,.docx,.pdf,.txt,.jpg,.jpeg,.png,.hwpx,.hwp";
-const ALLOWED_EXTENSIONS = new Set(ACCEPT.split(",").map((extension) => extension.slice(1)));
+const SUPPORTED_EXTENSIONS = new Set(["csv", "tsv", "json", "txt", "log", "jpg", "jpeg", "png"]);
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 type StatusFilter = "all" | FileStatus;
@@ -47,9 +46,8 @@ export function FilesPage() {
     const rejected: string[] = [];
 
     for (const file of pickedFiles) {
-      const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-      if (!ALLOWED_EXTENSIONS.has(extension)) {
-        rejected.push(`${file.name}: 지원하지 않는 형식`);
+      if (file.size === 0) {
+        rejected.push(`${file.name}: 빈 파일`);
       } else if (file.size > MAX_FILE_SIZE) {
         rejected.push(`${file.name}: 20MB 용량 초과`);
       } else {
@@ -101,7 +99,6 @@ export function FilesPage() {
           className="upload-input"
           type="file"
           multiple
-          accept={ACCEPT}
           onChange={(event) => {
             const picked = event.target.files;
             if (picked && picked.length > 0) handleFiles([...picked]);
@@ -110,7 +107,7 @@ export function FilesPage() {
         />
         <span className="upload-kicker">파일 업로드</span>
         <span className="title-sm">파일 여러 개를 여기로 끌어오거나 직접 선택하세요</span>
-        <span className="caption">다중 선택 가능 · CSV, TSV, Excel, 문서, 이미지 · 파일당 최대 20MB</span>
+        <span className="caption">내용 분석: CSV, JSON, TXT, LOG, JPG, PNG · 기타 형식은 메타데이터 등록 · 파일당 최대 20MB</span>
         <span className="btn btn-primary">파일 선택</span>
       </label>
 
@@ -244,7 +241,16 @@ export function FilesPage() {
                 </Link>
               ),
             },
-            { key: "kind", header: "형식", render: (file) => FILE_CATEGORY_LABEL[file.fileCategory] },
+            {
+              key: "kind",
+              header: "형식",
+              render: (file) => (
+                <span>
+                  {file.extension.toUpperCase() || "UNKNOWN"} · {FILE_CATEGORY_LABEL[file.fileCategory]}
+                  {!SUPPORTED_EXTENSIONS.has(file.extension) ? <small className="support-note">메타데이터만</small> : null}
+                </span>
+              ),
+            },
             { key: "size", header: "크기", numeric: true, render: (file) => formatBytes(file.sizeBytes) },
             {
               key: "rows",
@@ -271,7 +277,7 @@ export function FilesPage() {
               render: (file) => (
                 <div className="cluster">
                   <Link className="link" to={`/files/${file.id}`}>상세</Link>
-                  {file.status === "completed" ? <Link className="link" to={`/files/${file.id}/cleaning`}>정제</Link> : null}
+                  {file.status === "completed" && file.analysisSupported !== false ? <Link className="link" to={`/files/${file.id}/cleaning`}>정제</Link> : null}
                 </div>
               ),
             },

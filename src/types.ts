@@ -28,6 +28,8 @@ export type CleaningRule = {
   description: string;
   affectedRows: number;
   severity: "recommended" | "required";
+  target?: string;
+  reason?: string;
 };
 
 export type CleaningPreviewRow = {
@@ -45,6 +47,40 @@ export type DemoCleaningArtifact = {
   rows: Array<Record<string, string>>;
   truncated: boolean;
   source: "parsed" | "metadata";
+  analysis?: FileAnalysis;
+};
+
+export type NumericSummary = {
+  field: string;
+  count: number;
+  average: number;
+  minimum: number;
+  maximum: number;
+};
+
+export type FrequencyItem = {
+  value: string;
+  count: number;
+};
+
+export type QualityProfile = {
+  completeness: number;
+  uniqueness: number;
+  validity: number;
+  consistency: number;
+  score: number;
+  missingCells: number;
+  duplicateRows: number;
+};
+
+export type FileAnalysis = {
+  detectedFormat: string;
+  supported: boolean;
+  quality: QualityProfile | null;
+  numericSummaries: NumericSummary[];
+  frequencies: FrequencyItem[];
+  textStats: { lines: number; words: number; characters: number } | null;
+  imageMetadata: { width: number | null; height: number | null } | null;
 };
 
 export type MappingField =
@@ -142,6 +178,9 @@ export type DataFile = {
   sizeBytes: number;
   status: FileStatus;
   createdAt: string;
+  mimeType?: string;
+  storageLocation?: string;
+  analysisSupported?: boolean;
   rowCount: number | null;
   columns: string[];
   mapping: Partial<Record<string, MappingField>>;

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
+import { AppError } from "../api/AppError";
 import { applyDemoCleaning } from "../lib/demoProcessing";
 import { downloadText, toCsv } from "../lib/download";
 import { formatNumber } from "../lib/format";
@@ -86,7 +87,7 @@ export function FileCleaningPage() {
     setDownloadError(null);
   };
 
-  const downloadResult = () => {
+  const downloadResult = (format: "csv" | "json") => {
     if (!appliedRuleIds || !isApplied) return;
     try {
       const sourceRows = cleaningRows(fileId);
@@ -96,9 +97,13 @@ export function FileCleaningPage() {
         : preview
             .filter((row) => appliedSet.has(row.ruleId))
             .map((row) => ({ 행: String(row.row), 필드: row.field, 정제전: row.before, 정제후: row.after }));
-      if (cleanedRows.length === 0) throw new Error("다운로드할 정제 데이터가 없습니다.");
+      if (cleanedRows.length === 0) throw new AppError("EMPTY_EXPORT", "다운로드할 정제 데이터가 없습니다.");
       const baseName = file.originalName.replace(/\.[^.]+$/, "");
-      downloadText(`${baseName}_정제결과.csv`, toCsv(cleanedRows));
+      if (format === "json") {
+        downloadText(`${baseName}_정제결과.json`, JSON.stringify(cleanedRows, null, 2), "application/json;charset=utf-8");
+      } else {
+        downloadText(`${baseName}_정제결과.csv`, toCsv(cleanedRows));
+      }
       setDownloadError(null);
     } catch (error) {
       setDownloadError(error instanceof Error ? error.message : "정제 결과를 다운로드하지 못했습니다.");
@@ -126,7 +131,8 @@ export function FileCleaningPage() {
         actions={
           <>
             <Button variant="secondary" to={`/files/${file.id}`}>파일 상세</Button>
-            <Button onClick={downloadResult} disabled={!isApplied}>결과 다운로드</Button>
+            <Button onClick={() => downloadResult("csv")} disabled={!isApplied}>CSV 다운로드</Button>
+            <Button variant="secondary" onClick={() => downloadResult("json")} disabled={!isApplied}>JSON 다운로드</Button>
           </>
         }
       />
@@ -163,6 +169,11 @@ export function FileCleaningPage() {
       {artifact?.source === "metadata" ? (
         <div className="feedback" role="note">
           이 형식은 브라우저 데모에서 내용 추출을 지원하지 않습니다. 파일 정보만 저장되며 실제 정제는 백엔드 연결 후 제공됩니다.
+        </div>
+      ) : null}
+      {artifact?.source === "parsed" ? (
+        <div className="feedback" role="note">
+          현재 추천은 품질 진단 결과를 이용한 규칙 엔진 데모입니다. 백엔드 연결 후 AI 추천으로 교체되며 자동 적용되지 않습니다.
         </div>
       ) : null}
       {artifact?.truncated ? (
@@ -210,6 +221,7 @@ export function FileCleaningPage() {
                       </span>
                     </div>
                     <p className="body">{rule.description}</p>
+                    <p className="caption">대상: {rule.target ?? "전체 데이터"} · 사유: {rule.reason ?? "품질 진단 결과에서 변경 대상을 발견했습니다."}</p>
                     <p className="caption">영향 행 {formatNumber(rule.affectedRows)}개</p>
                   </div>
                   <label className="rule-checkbox">

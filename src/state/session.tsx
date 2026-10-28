@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { AppError } from "../api/AppError";
 
 type SessionValue = {
   loggedIn: boolean;
@@ -25,7 +26,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 export function useSession() {
   const value = useContext(SessionContext);
   if (!value) {
-    throw new Error("세션이 없습니다.");
+    throw new AppError("SESSION_PROVIDER_MISSING", "SessionProvider가 필요합니다.");
   }
   return value;
 }

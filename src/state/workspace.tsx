@@ -8,6 +8,7 @@ import {
   reviews,
 } from "../data/mock";
 import { inspectDemoFile } from "../lib/demoProcessing";
+import { AppError } from "../api/AppError";
 import type {
   CandidateDecision,
   CleaningDecision,
@@ -20,7 +21,7 @@ import type {
   ReviewItem,
 } from "../types";
 
-const STORAGE_KEY = "datalens-demo-workspace-v3";
+const STORAGE_KEY = "datalens-demo-workspace-v4";
 
 type ReviewState = {
   status: ReviewItem["status"];
@@ -61,10 +62,10 @@ const WorkspaceContext = createContext<WorkspaceValue | null>(null);
 
 function inferCategory(name: string): FileCategory {
   const extension = name.split(".").pop()?.toLowerCase() ?? "";
-  if (["csv", "tsv", "xlsx", "xls"].includes(extension)) return "tabular";
+  if (["csv", "tsv", "json", "xlsx", "xls"].includes(extension)) return "tabular";
   if (["pdf", "docx", "hwpx", "hwp"].includes(extension)) return "document";
   if (["jpg", "jpeg", "png"].includes(extension)) return "image";
-  if (extension === "txt") return "text";
+  if (["txt", "log"].includes(extension)) return "text";
   return "other";
 }
 
@@ -100,7 +101,7 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const stored = useMemo(readStoredWorkspace, []);
+  const stored = useMemo(() => readStoredWorkspace(), []);
   const [extraFiles, setExtraFiles] = useState<DataFile[]>(stored.extraFiles);
   const [artifacts, setArtifacts] = useState<Record<string, DemoCleaningArtifact>>(stored.artifacts);
   const [appliedCleaning, setAppliedCleaning] = useState<Record<string, string[]>>(stored.appliedCleaning);
@@ -146,13 +147,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         rowCount: artifact.source === "parsed" ? artifact.rows.length : null,
         columns,
         mapping: {},
+        analysisSupported: artifact.analysis?.supported ?? false,
         processingError: undefined,
       });
     } catch (error) {
       updateExtraFile(id, {
         status: "failed",
         uploadProgress: 0,
-        processingError: error instanceof Error ? error.message : "파일을 처리하지 못했습니다.",
+        processingError: error instanceof AppError
+          ? `${error.code}: ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : "파일을 처리하지 못했습니다.",
       });
     }
   }, [updateExtraFile]);
@@ -170,6 +176,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           sizeBytes: file.size,
           status: "queued" as const,
           createdAt: today,
+          mimeType: file.type || "application/octet-stream",
+          storageLocation: `browser://datalens/${file.name}`,
+          analysisSupported: undefined,
           rowCount: null,
           columns: [],
           mapping: {},
@@ -259,6 +268,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
 export function useWorkspace(): WorkspaceValue {
   const value = useContext(WorkspaceContext);
-  if (!value) throw new Error("WorkspaceProvider가 필요합니다.");
+  if (!value) throw new AppError("WORKSPACE_PROVIDER_MISSING", "WorkspaceProvider가 필요합니다.");
   return value;
 }
