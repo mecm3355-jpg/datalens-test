@@ -126,7 +126,7 @@ export function FilesPage() {
         <span className="upload-kicker">파일 업로드</span>
         <span className="title-sm">파일 여러 개를 여기로 끌어오거나 직접 선택하세요</span>
         <span className="caption">다중 선택 가능 · CSV, TSV, Excel, 문서, 이미지 · 파일당 최대 20MB</span>
-        <span className="btn btn-primary">여러 파일 선택</span>
+        <span className="btn btn-primary">파일 선택</span>
       </label>
 
       {uploadFeedback ? (
