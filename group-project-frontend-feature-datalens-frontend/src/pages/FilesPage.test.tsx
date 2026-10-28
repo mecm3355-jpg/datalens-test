@@ -44,10 +44,17 @@ describe("FilesPage", () => {
 
     expect((await screen.findAllByText("records.json")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("service.log").length).toBeGreaterThan(0);
+    expect(screen.getByRole("progressbar", { name: "records.json 처리 진행률" })).not.toHaveAttribute(
+      "aria-valuenow",
+      "100",
+    );
     await waitFor(() => expect(screen.getByText("2개 파일 등록 완료")).toBeInTheDocument());
     await waitFor(() => {
-      const progress = screen.getAllByRole("progressbar");
-      expect(progress).toHaveLength(2);
+      const progress = [
+        ...screen.getAllByRole("progressbar", { name: /records\.json.*처리 진행률/ }),
+        ...screen.getAllByRole("progressbar", { name: /service\.log.*처리 진행률/ }),
+      ];
+      expect(progress).toHaveLength(4);
       expect(progress.every((item) => item.getAttribute("aria-valuenow") === "100")).toBe(true);
     }, { timeout: 3000 });
   });

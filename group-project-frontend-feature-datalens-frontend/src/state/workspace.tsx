@@ -10,7 +10,11 @@ import {
 import { inspectDemoFile } from "../lib/demoProcessing";
 import { AppError } from "../api/AppError";
 import type { ApiDashboardSummary } from "../api/datalens";
-import { useApiWorkspace, type UploadResult } from "../hooks/useApiWorkspace";
+import {
+  useApiWorkspace,
+  type UploadLifecycleCallbacks,
+  type UploadResult,
+} from "../hooks/useApiWorkspace";
 import type {
   CandidateDecision,
   CleaningDecision,
@@ -46,7 +50,7 @@ type WorkspaceValue = {
   workspaceError: string | null;
   dashboardSummary: ApiDashboardSummary | null;
   files: DataFile[];
-  addFiles: (list: File[]) => Promise<UploadResult[]>;
+  addFiles: (list: File[], callbacks?: UploadLifecycleCallbacks) => Promise<UploadResult[]>;
   retryFileProcessing: (fileId: string) => Promise<boolean>;
   ensureFileData: (fileId: string) => Promise<void>;
   candidateDecision: (id: string) => CandidateDecision;
@@ -190,8 +194,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       files: DATA_MODE === "api"
         ? api.files
         : [...extraFiles, ...seedFiles].filter((file) => !deletedFileIds.includes(file.id)),
-      addFiles: async (list) => {
-        if (DATA_MODE === "api") return api.addFiles(list);
+      addFiles: async (list, callbacks) => {
+        if (DATA_MODE === "api") return api.addFiles(list, callbacks);
         const today = new Date().toISOString().slice(0, 10);
         const next = list.map((file) => ({
           id: crypto.randomUUID(),
@@ -211,6 +215,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           uploadProgress: 0,
         }));
         setExtraFiles((current) => [...next, ...current]);
+        callbacks?.onQueued?.(next.map((file) => file.id));
         next.forEach((dataFile, index) => {
           const original = list[index];
           fileHandles.current.set(dataFile.id, original);

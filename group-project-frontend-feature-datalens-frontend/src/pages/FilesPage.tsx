@@ -26,6 +26,24 @@ function fileExtension(name: string): string {
   return name.split(".").pop()?.toLowerCase() ?? "";
 }
 
+function fileProgress(file: DataFile): number {
+  const fallback = file.status === "completed" ? 100 : 0;
+  return Math.min(100, Math.max(0, Math.round(file.uploadProgress ?? fallback)));
+}
+
+function progressLabel(file: DataFile): string {
+  if (file.status === "failed") return "처리 실패";
+  if (file.status === "completed") {
+    return file.analysisSupported === false ? "파일 등록 완료" : "분석 및 처리 완료";
+  }
+  if (file.status === "queued") return "처리 대기 중";
+  return fileProgress(file) <= 5 ? "서버로 업로드 중" : "데이터 분석 중";
+}
+
+function replaceRecentUploadId(ids: string[], temporaryId: string, serverId: string): string[] {
+  return ids.map((id) => (id === temporaryId ? serverId : id));
+}
+
 export function FilesPage() {
   const { files, addFiles, deleteFile, dataMode, loading, workspaceError } = useWorkspace();
   const supportedExtensions = dataMode === "api" ? API_SUPPORTED_EXTENSIONS : DEMO_SUPPORTED_EXTENSIONS;
@@ -92,7 +110,12 @@ export function FilesPage() {
           message: `${expectedUnsupported.map((file) => file.name).join(", ")}: 내용 분석을 지원하지 않는 형식입니다. 원본과 기본 정보만 등록합니다.`,
         });
       }
-      const results = await addFiles(accepted);
+      const results = await addFiles(accepted, {
+        onQueued: setRecentUploadIds,
+        onRegistered: (temporaryId, serverId) => {
+          setRecentUploadIds((current) => replaceRecentUploadId(current, temporaryId, serverId));
+        },
+      });
       setRecentUploadIds(results.map((result) => result.id));
       const failed = results.filter((result) => !result.success);
       const unsupported = results.filter((result) => result.success && result.unsupported);
@@ -326,7 +349,9 @@ export function FilesPage() {
           </div>
           <ul className="upload-batch-list">
             {recentUploadBatch.map((file) => {
-              const progress = file.uploadProgress ?? (file.status === "completed" ? 100 : 0);
+              const progress = fileProgress(file);
+              const indeterminate = (file.status === "queued" || file.status === "processing")
+                && progress === 0;
               return (
                 <li className="upload-batch-item" key={file.id}>
                   <div className="upload-batch-meta">
@@ -334,18 +359,19 @@ export function FilesPage() {
                     <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
                     <span className="caption num">{progress}%</span>
                   </div>
+                  <p className="caption upload-stage-label">{progressLabel(file)}</p>
                   {file.analysisSupported === false ? (
                     <p className="caption">내용 분석 미지원 · 원본과 메타데이터만 등록됨</p>
                   ) : null}
                   <div
-                    className="upload-progress"
+                    className={`upload-progress is-${file.status}${indeterminate ? " is-indeterminate" : ""}`}
                     role="progressbar"
                     aria-label={`${file.originalName} 처리 진행률`}
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={progress}
                   >
-                    <span style={{ width: `${progress}%` }} />
+                    <span style={{ width: `${file.status === "failed" ? 100 : progress}%` }} />
                   </div>
                 </li>
               );
@@ -492,14 +518,30 @@ export function FilesPage() {
             {
               key: "status",
               header: "상태",
-              render: (file) => (
-                <div className="status-cell">
-                  <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
-                  {file.status === "processing" && file.uploadProgress !== undefined ? (
-                    <span className="caption num">{file.uploadProgress}%</span>
-                  ) : null}
-                </div>
-              ),
+              render: (file) => {
+                const progress = fileProgress(file);
+                const indeterminate = (file.status === "queued" || file.status === "processing")
+                  && progress === 0;
+                return (
+                  <div className="file-status-progress">
+                    <div className="status-cell">
+                      <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span>
+                      <span className="caption num">{progress}%</span>
+                    </div>
+                    <div
+                      className={`upload-progress is-${file.status}${indeterminate ? " is-indeterminate" : ""}`}
+                      role="progressbar"
+                      aria-label={`${file.originalName} 목록 처리 진행률`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progress}
+                    >
+                      <span style={{ width: `${file.status === "failed" ? 100 : progress}%` }} />
+                    </div>
+                    <span className="caption">{progressLabel(file)}</span>
+                  </div>
+                );
+              },
             },
             { key: "date", header: "업로드일", numeric: true, render: (file) => formatDate(file.createdAt) },
             {

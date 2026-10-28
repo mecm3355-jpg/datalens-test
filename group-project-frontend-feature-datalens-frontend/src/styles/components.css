@@ -1177,6 +1177,53 @@ td.num {
   transition: width 300ms ease;
 }
 
+.upload-progress.is-completed > span {
+  background: var(--color-trading-up);
+}
+
+.upload-progress.is-failed > span {
+  background: var(--color-trading-down);
+}
+
+.upload-progress.is-queued > span {
+  background: var(--color-muted-strong);
+}
+
+.upload-progress.is-indeterminate > span {
+  width: 34% !important;
+  animation: upload-progress-pulse 1.2s ease-in-out infinite;
+}
+
+.upload-stage-label {
+  margin: 0;
+}
+
+.file-status-progress {
+  display: grid;
+  min-width: 148px;
+  gap: var(--space-xxs);
+}
+
+.file-status-progress .status-cell {
+  justify-content: space-between;
+}
+
+@keyframes upload-progress-pulse {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-progress.is-indeterminate > span {
+    animation: none;
+    transform: none;
+  }
+}
+
 .cleaning-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

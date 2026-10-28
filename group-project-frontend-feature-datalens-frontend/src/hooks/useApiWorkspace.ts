@@ -16,6 +16,11 @@ export type UploadResult = {
   error?: string;
 };
 
+export type UploadLifecycleCallbacks = {
+  onQueued?: (temporaryIds: string[]) => void;
+  onRegistered?: (temporaryId: string, serverId: string) => void;
+};
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -44,7 +49,7 @@ export type ApiWorkspace = {
   loading: boolean;
   error: string | null;
   dashboard: ApiDashboardSummary | null;
-  addFiles: (files: File[]) => Promise<UploadResult[]>;
+  addFiles: (files: File[], callbacks?: UploadLifecycleCallbacks) => Promise<UploadResult[]>;
   retryFileProcessing: (fileId: string) => Promise<boolean>;
   requestAnalysis: (fileId: string) => Promise<void>;
   ensureFileData: (fileId: string) => Promise<void>;
@@ -190,7 +195,10 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     };
   }, [enabled, patchFile, pollJob, refreshDashboard]);
 
-  const addFiles = useCallback(async (selected: File[]): Promise<UploadResult[]> => {
+  const addFiles = useCallback(async (
+    selected: File[],
+    callbacks?: UploadLifecycleCallbacks,
+  ): Promise<UploadResult[]> => {
     const optimistic = selected.map((file) => ({
       id: crypto.randomUUID(),
       originalName: file.name,
@@ -207,6 +215,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
       isUploading: true,
     }));
     setFiles((current) => [...optimistic, ...current]);
+    callbacks?.onQueued?.(optimistic.map((file) => file.id));
 
     const ids = await Promise.all(selected.map(async (file, index) => {
       const temporaryId = optimistic[index].id;
@@ -217,6 +226,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         setFiles((current) => current.map((item) =>
           item.id === temporaryId ? toDataFile(serverFile) : item,
         ));
+        callbacks?.onRegistered?.(temporaryId, serverFile.fileId);
         if (serverFile.lastJobId) {
           void pollJob(serverFile.lastJobId, serverFile.fileId)
             .then(() => ensureFileData(serverFile.fileId))
