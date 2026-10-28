@@ -12,8 +12,6 @@ from app.core.config import Settings
 from app.core.database import Mongo, get_mongo
 from app.core.errors import AppError
 from app.schemas.common import ApiModel, ApiResponse, ok
-from app.services.job_handlers import HANDLERS
-from app.services.job_runner import JobRunner
 
 router = APIRouter(prefix="/internal/queue", include_in_schema=False)
 
@@ -55,6 +53,10 @@ async def process_queue_job(
         raise AppError("QUEUE_WORKER_FORBIDDEN", "Queue worker 요청을 인증할 수 없습니다.", 403)
     if not ObjectId.is_valid(job_id):
         raise AppError("INVALID_JOB_ID", "작업 ID 형식이 올바르지 않습니다.", 422)
+
+    # 분석기 모듈은 무거우므로 일반 API cold start에는 포함하지 않고 Queue 요청에서만 불러온다.
+    from app.services.job_handlers import HANDLERS
+    from app.services.job_runner import JobRunner
 
     processed = await JobRunner(mongo.db, settings, HANDLERS).run_job(
         ObjectId(job_id),
