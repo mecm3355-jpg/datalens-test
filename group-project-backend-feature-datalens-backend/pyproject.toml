@@ -77,6 +77,3 @@ testpaths = ["tests"]
 
 [tool.vercel]
 entrypoint = "app.vercel:app"
-
-[[tool.vercel.subscribers]]
-entrypoint = "app.vercel_tasks"
