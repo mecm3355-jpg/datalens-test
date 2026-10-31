@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import type { ComplaintMapping } from "../api/datalens";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
@@ -8,6 +9,7 @@ import {
   qualityByFile,
   stages,
 } from "../data/mock";
+import { readScannedPdf } from "../lib/browserOcr";
 import { formatBytes, formatDate, formatNumber, formatRatio } from "../lib/format";
 import { FILE_STATUS_LABEL, MAPPING_FIELDS, SEVERITY_LABEL } from "../lib/labels";
 import { useWorkspace } from "../state/workspace";
@@ -268,6 +270,14 @@ function FileDetail({ fileId }: { fileId: string }) {
         </section>
       ) : null}
 
+      {dataMode === "api" && file.status === "completed" && ["tabular", "text", "document"].includes(file.fileCategory)
+        ? <ComplaintAnalysisCard
+            file={file}
+            complaintCount={preview.length}
+            scanned={quality.some((issue) => issue.type === "no_text_layer")}
+          />
+        : null}
+
       {file.columns.length > 0 ? <MappingCard file={file} /> : null}
 
       {!analysisUnsupported ? <article className="card">
@@ -353,6 +363,138 @@ function StageTrack({ status, stage }: { status: JobStatus; stage: string }) {
         })}
       </ol>
     </div>
+  );
+}
+
+const COMPLAINT_FIELDS: Array<{ id: keyof ComplaintMapping; label: string; pattern: RegExp }> = [
+  { id: "content", label: "민원 내용", pattern: /내용|본문|민원/ },
+  { id: "title", label: "제목", pattern: /제목/ },
+  { id: "receivedAt", label: "접수일시", pattern: /접수|일시|일자|날짜/ },
+  { id: "region", label: "지역", pattern: /지역|행정동|읍면동/ },
+];
+
+/** 열 이름으로 민원 필드의 첫 추정값을 만듭니다. 사용자가 화면에서 고칠 수 있습니다. */
+function guessComplaintMapping(columns: string[]): ComplaintMapping {
+  const guess: ComplaintMapping = {};
+  for (const field of COMPLAINT_FIELDS) {
+    const column = columns.find((name) => field.pattern.test(name));
+    if (column) guess[field.id] = column;
+  }
+  return guess;
+}
+
+/** 민원 분석을 시작하는 카드입니다. AI 없이 서버의 규칙 방식으로 분석합니다. */
+function ComplaintAnalysisCard({ file, complaintCount, scanned }: { file: DataFile; complaintCount: number; scanned: boolean }) {
+  const { requestComplaintAnalysis, analyzeOcrText } = useWorkspace();
+  const navigate = useNavigate();
+  const [scanSource, setScanSource] = useState<File | null>(null);
+  const [ocrProgress, setOcrProgress] = useState<string | null>(null);
+  const { reload } = useComplaintData();
+  const [mapping, setMapping] = useState<ComplaintMapping>(() => guessComplaintMapping(file.columns));
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isTable = file.fileCategory === "tabular";
+  const isDocument = file.fileCategory === "document";
+  const usesSplitRule = isDocument || file.fileCategory === "text";
+  // PDF는 여러 민원을 모아 인쇄한 경우가 많아, 파일 전체가 민원 1건으로 합쳐지지 않게 분리 규칙을 기본으로 둔다.
+  // 브라우저 OCR로 만든 글자 파일도 내용은 PDF와 같다
+  const [splitRule, setSplitRule] = useState(
+    file.extension.toLowerCase() === "pdf" || file.originalName.endsWith(".ocr.txt") ? "sinmungo" : "",
+  );
+  const canStart = scanned ? scanSource !== null : !isTable || Boolean(mapping.content || mapping.title);
+
+  const start = async () => {
+    setIsRunning(true);
+    setError(null);
+    try {
+      if (scanned && scanSource) {
+        // 서버는 원본을 내려주지 않으므로 같은 파일을 다시 고르게 하고, 다른 파일을 분석하지 않게 크기를 맞춰 본다
+        if (scanSource.size !== file.sizeBytes) {
+          throw new Error("올린 PDF와 크기가 다른 파일입니다. 같은 파일을 선택해 주세요.");
+        }
+        const text = await readScannedPdf(scanSource, (done, total) => {
+          setOcrProgress(`글자 읽는 중 ${done}/${total}쪽`);
+        });
+        setOcrProgress("읽은 글자로 민원 분석 중");
+        const newFileId = await analyzeOcrText(file.originalName, text, splitRule || undefined);
+        await reload();
+        navigate(`/files/${newFileId}`);
+        return;
+      }
+      await requestComplaintAnalysis(file.id, isTable ? mapping : {}, usesSplitRule && splitRule ? splitRule : undefined);
+      await reload();
+    } catch (startError) {
+      setError(startError instanceof Error ? startError.message : "민원 분석을 시작하지 못했습니다.");
+    } finally {
+      setIsRunning(false);
+      setOcrProgress(null);
+    }
+  };
+
+  return (
+    <article className="card">
+      <div className="card-head">
+        <h2 className="title-sm">민원 분석</h2>
+        <Button onClick={() => void start()} disabled={isRunning || !canStart}>
+          {isRunning ? "분석 중" : complaintCount > 0 ? "민원 다시 분석" : "민원 분석 시작"}
+        </Button>
+      </div>
+      <p className="caption">
+        {complaintCount > 0 ? `민원 ${formatNumber(complaintCount)}건을 분석했습니다. ` : ""}
+        AI 없이 단어와 규칙으로 민원을 묶습니다. 건수가 많을수록 묶음이 정확해집니다.
+      </p>
+      {isTable ? (
+        <div className="mapping-grid notice">
+          {COMPLAINT_FIELDS.map((field) => (
+            <label className="field" key={field.id}>
+              <span>{field.label}</span>
+              <select
+                className="select"
+                value={mapping[field.id] ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setMapping((current) => ({ ...current, [field.id]: value || undefined }));
+                }}
+              >
+                <option value="">선택 안 함</option>
+                {file.columns.map((column) => (
+                  <option key={column} value={column}>{column}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      ) : null}
+      {usesSplitRule ? (
+        <div className="mapping-grid notice">
+          <label className="field">
+            <span>문서 형식</span>
+            <select className="select" value={splitRule} onChange={(event) => setSplitRule(event.target.value)}>
+              <option value="sinmungo">국민신문고 목록 (민원별로 나눔)</option>
+              <option value="">{isDocument ? "파일 전체를 민원 1건으로" : "빈 줄로 나눔"}</option>
+            </select>
+          </label>
+          {scanned ? (
+            <label className="field">
+              <span>원본 PDF 선택</span>
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) => setScanSource(event.target.files?.[0] ?? null)}
+              />
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+      {scanned ? (
+        <p className="caption">
+          글자가 없는 스캔본입니다. 이 PC의 브라우저에서 글자를 읽으며 PDF 파일은 밖으로 보내지 않습니다.
+          쪽수에 따라 몇 분 걸릴 수 있으니 창을 닫지 마세요.
+        </p>
+      ) : null}
+      {ocrProgress ? <p className="caption" role="status">{ocrProgress}</p> : null}
+      {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
+    </article>
   );
 }
 

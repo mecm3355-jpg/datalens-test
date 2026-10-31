@@ -1,12 +1,16 @@
 """문장 임베딩 어댑터(PRD 6장). 임베딩은 항상 로컬에서 만든다(원문이 밖으로 나가지 않음).
 
-- 기본 모델은 bge-m3(sentence-transformers). 무거운 패키지라 처음 쓸 때 불러온다
-  (pip install -e ".[analysis]", 첫 실행 때 모델 약 2.3GB를 Hugging Face 캐시에 받는다).
+- 기본은 AI 모델 없는 단어 벡터(term-hash-v1). 명사를 고정 크기 벡터에 해시하고, 흔한 낱말은
+  이번에 분석하는 본문들에서 센 IDF로 낮춘다(모델 파일 없음, 원문이 밖으로 나가지 않음).
+- EMBEDDING_MODEL에 모델 이름을 주면 bge-m3 등 sentence-transformers를 쓴다. 무거운 패키지라
+  처음 쓸 때 불러온다(pip install -e ".[analysis]", 첫 실행 때 약 2.3GB를 내려받는다).
 - 결과 벡터는 길이 1로 정규화해 내적 = 코사인 유사도가 되게 한다.
 - 모델을 바꾸면 카테고리 중심을 모두 다시 계산해야 하므로 모델 이름을 결과마다 기록한다.
 """
 
 import hashlib
+import math
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
@@ -16,12 +20,16 @@ from numpy.typing import NDArray
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.services.keywords import noun_tokens
 
 Vectors = NDArray[np.float32]
 
 # 한국어를 지원하는 다국어 문장 임베딩(PRD 6장 "bge-m3 등"). 바꾸면 카테고리 중심을 모두 다시
 # 계산해야 하므로 교체는 분기 정리 때만 한다(PRD 6장 공통 인터페이스)
 DEFAULT_MODEL = "BAAI/bge-m3"
+# AI 모델 없는 단어 벡터의 이름. 차원·가중치 파일을 바꾸면 벡터가 달라지므로 버전을 올린다
+TERM_HASH_MODEL = "term-hash-v1"
+TERM_HASH_DIMENSIONS = 4096
 
 
 class Embedder(Protocol):
@@ -49,6 +57,70 @@ def normalize(vectors: NDArray[np.floating]) -> Vectors:
     # 0으로 나누면 NaN이 퍼지므로 영벡터는 1로 나눠(=그대로) 유사도 0이 되게 둔다
     norms[norms == 0] = 1.0
     return np.asarray(matrix / norms, dtype=np.float32)
+
+
+class TermHashEmbedder:
+    """명사를 해시해 만든 고정 차원 벡터. 모델 파일 없이 코드만으로 계산한다."""
+
+    model_name = TERM_HASH_MODEL
+
+    def __init__(
+        self, weights: dict[str, float] | None = None, default_weight: float = 1.0
+    ) -> None:
+        """낱말 가중치를 받는다. 비워 두면 모든 낱말의 가중치가 같다.
+
+        파라미터:
+            weights: 낱말별 가중치(흔한 낱말일수록 작다)
+            default_weight: 가중치 표에 없는 낱말의 가중치
+        """
+        self._weights = weights or {}
+        self._default_weight = default_weight
+
+    def fitted(self, texts: list[str]) -> "TermHashEmbedder":
+        """본문들에서 센 IDF를 가중치로 쓰는 새 임베더를 돌려준다.
+
+        "요청합니다"처럼 어느 민원에나 나오는 낱말은 지역·기관마다 달라 고정 표로는 낮출 수 없어
+        (포항 표로 가상민원을 재면 배정 정확도 6%) 분석할 본문에서 직접 센다. 위치는 낱말
+        해시로 고정이라 가중치가 달라도 이전 분석의 벡터와 같은 공간에서 비교된다.
+
+        파라미터:
+            texts: 마스킹된 본문 목록
+        """
+        frequency: Counter[str] = Counter()
+        for text in texts:
+            frequency.update(set(noun_tokens(text)))
+        total = len(texts)
+        weights = {
+            term: math.log((total + 1) / (count + 1)) + 1.0 for term, count in frequency.items()
+        }
+        # 이번 본문에 없던 낱말(원형 문장 등)은 한 번 나온 낱말처럼 드문 것으로 본다
+        return TermHashEmbedder(weights, math.log((total + 1) / 2) + 1.0)
+
+    @staticmethod
+    def _bucket(term: str) -> int:
+        """낱말이 들어갈 벡터 위치를 정한다. 실행마다 같도록 내장 hash() 대신 blake2b를 쓴다.
+
+        파라미터:
+            term: 낱말
+        """
+        digest = hashlib.blake2b(term.encode(), digest_size=8).digest()
+        return int.from_bytes(digest, "big") % TERM_HASH_DIMENSIONS
+
+    def embed(self, texts: list[str]) -> Vectors:
+        """본문마다 명사 가중치 벡터를 만든다. 명사가 없는 본문은 영벡터가 된다.
+
+        파라미터:
+            texts: 마스킹된 본문 목록
+        """
+        if not texts:
+            return np.zeros((0, 0), dtype=np.float32)
+        matrix = np.zeros((len(texts), TERM_HASH_DIMENSIONS), dtype=np.float32)
+        for row, text in enumerate(texts):
+            for term, count in Counter(noun_tokens(text)).items():
+                # 같은 낱말의 반복이 벡터를 지배하지 않도록 횟수는 로그로 줄인다
+                weight = self._weights.get(term, self._default_weight)
+                matrix[row, self._bucket(term)] += (1.0 + math.log(count)) * weight
+        return normalize(matrix)
 
 
 class SentenceTransformerEmbedder:
@@ -181,6 +253,9 @@ def get_embedder(settings: Settings) -> Embedder:
     """
     if _override is not None:
         return _override
+    # 단어 벡터는 계산이 가벼워 파일 캐시를 쓰지 않는다(서버리스는 쓰기 가능한 폴더도 제한된다)
+    if settings.embedding_model == TERM_HASH_MODEL:
+        return TermHashEmbedder()
     # 캐시 폴더를 따로 정하지 않으면 저장소 아래에 둔다. resolve()로 절대 경로를 만들어
     # 같은 폴더를 다르게 적어도 lru_cache 키가 같아지게 한다
     cache_dir = settings.embedding_cache_dir or settings.storage_root / "embedding-cache"

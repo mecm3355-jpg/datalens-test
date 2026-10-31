@@ -14,6 +14,7 @@ MONGODB_URI=mongodb+srv://...
 MONGODB_DB_NAME=datalens
 STORAGE_PROVIDER=vercel_blob
 JOB_DISPATCH_MODE=vercel_queue
+QUEUE_WORKER_SECRET=임의의-긴-문자열
 CORS_ORIGINS=https://배포될도메인.vercel.app
 AUTH_REQUIRED=true
 AUTH_COOKIE_SECURE=true
@@ -31,7 +32,7 @@ VITE_UPLOAD_MODE=blob
 배포 후 첫 회원가입 계정이 관리자가 되고 기존 소유자 없는 데이터가 그 계정으로 이전되므로,
 반드시 프로젝트 관리자가 첫 가입을 완료한 다음 일반 사용자에게 주소를 공개한다.
 
-- Secret: `MONGODB_URI`, Blob 연결이 만든 토큰, `AZURE_OPENAI_*` 키
+- Secret: `MONGODB_URI`, `QUEUE_WORKER_SECRET`(없으면 분석 작업이 대기 상태로 멈춘다), Blob 연결이 만든 토큰, `AZURE_OPENAI_*` 키
 - Config: `MONGODB_DB_NAME`, `AUTH_*`, `CORS_ORIGINS`, `STORAGE_PROVIDER`,
   `JOB_DISPATCH_MODE`, `VITE_*`
 - Preview에는 운영 MongoDB Secret을 재사용하지 말고 별도 DB·계정을 사용한다.

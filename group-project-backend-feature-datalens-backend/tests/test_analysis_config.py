@@ -9,7 +9,7 @@ from app.core.errors import AppError
 def test_loads_repository_config() -> None:
     config = load_analysis_config(DEFAULT_PATH)
 
-    assert config.assignment.threshold == 0.80
+    assert config.assignment.threshold == 0.45
     assert config.discovery.candidate_min_size == 5
     assert config.spike.ratio == 1.5
     assert config.discovery.min_cohesion == 0.0
