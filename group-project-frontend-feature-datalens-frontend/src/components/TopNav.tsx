@@ -5,6 +5,10 @@ import { useSession } from "../state/session";
 const links = [
   { to: "/", label: "대시보드", end: true },
   { to: "/files", label: "파일", end: false },
+  { to: "/complaints", label: "민원", end: false },
+  { to: "/categories", label: "카테고리", end: false },
+  { to: "/reviews", label: "검토", end: true },
+  { to: "/issues", label: "이슈", end: false },
   { to: "/data", label: "분석 리포트", end: true },
   { to: "/about", label: "서비스 소개", end: true },
 ];
