@@ -46,6 +46,7 @@
   font-size: 14px;
   font-weight: 500;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
 .nav-link.is-active {
@@ -1453,7 +1454,13 @@ td.num {
   }
 }
 
-@media (max-width: 767px) {
+/* 메뉴 8개와 사용자 이름이 한 줄에 들어가지 않는 폭부터 접는 메뉴로 바꾼다 */
+@media (max-width: 919px) {
+  .nav-tools > .btn-nav-login,
+  .nav-tools > .btn-nav-signup {
+    display: none;
+  }
+
   .nav-links {
     display: none;
     position: fixed;
@@ -1504,11 +1511,6 @@ td.num {
 
   .nav-links {
     padding-inline: 16px;
-  }
-
-  .nav-tools > .btn-nav-login,
-  .nav-tools > .btn-nav-signup {
-    display: none;
   }
 
   .search {
