@@ -73,8 +73,9 @@ class Settings(BaseSettings):
     # 줄 신뢰도가 이 값 미만이면 사람 검수 대상
     ocr_low_confidence: float = 0.6
 
-    # 민원 분석 임베딩(PRD 6장, 로컬). 캐시 폴더를 비우면 저장소의 embedding-cache를 쓴다
-    embedding_model: str = "BAAI/bge-m3"
+    # 민원 분석 임베딩(PRD 6장, 로컬). 기본은 AI 모델 없는 단어 벡터이고, 모델 이름을 주면 그 모델을
+    # 쓴다. 모델을 쓸 때 캐시 폴더를 비우면 저장소의 embedding-cache를 쓴다
+    embedding_model: str = "term-hash-v1"
     embedding_cache_dir: Path | None = None
 
     @model_validator(mode="after")

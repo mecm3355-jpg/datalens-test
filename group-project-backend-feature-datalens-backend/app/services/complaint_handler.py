@@ -45,7 +45,7 @@ from app.services.attributes import extract_by_llm, extract_by_rules, refine_wit
 from app.services.complaint_extraction import RawComplaint, extract_complaints
 from app.services.complaint_vectors import load_vectors, save_vectors
 from app.services.discovery import discover
-from app.services.embedding import Embedder, Vectors, get_embedder
+from app.services.embedding import Embedder, TermHashEmbedder, Vectors, get_embedder
 from app.services.issue_grouping import IssueInput, group_issues
 from app.services.job_runner import JobContext
 from app.services.llm import LlmClient, create_llm_client, llm_configured
@@ -232,16 +232,24 @@ async def analyze_complaints(ctx: JobContext) -> None:
 
     # ── parsing: 형식별 추출·민원 분리. OCR이 있어 오래 걸리므로 스레드에서 돌린다
     await ctx.report("parsing", 10)
+    ocr = ocr_options(ctx.settings)
     extraction = await asyncio.to_thread(
         extract_complaints,
         path,
         ctx.file.extension,
         request,
-        ocr_options(ctx.settings),
+        ocr,
         load_split_rules(),
     )
     raws: list[RawComplaint] = extraction.records
     if not raws:
+        # 스캔 PDF는 OCR이 없으면 글자가 하나도 안 나오므로, 형식 문제와 헷갈리지 않게 따로 알린다
+        if ocr is None and any(i.type == "no_text_layer" for i in extraction.issues):
+            raise AppError(
+                "OCR_NOT_AVAILABLE",
+                "글자가 없는 스캔본입니다. 이 서버에는 OCR이 없어 읽을 수 없습니다.",
+                422,
+            )
         raise AppError(
             "NO_COMPLAINTS", "파일에서 민원을 찾지 못했습니다(매핑·분리 규칙 확인).", 422
         )
@@ -263,6 +271,9 @@ async def analyze_complaints(ctx: JobContext) -> None:
     # ── embedding: 로컬 모델로만 계산한다(원문이 밖으로 나가지 않음, PRD 6장)
     await ctx.report("embedding", 35)
     embedder = get_embedder(ctx.settings)
+    # 단어 벡터는 이번 본문들로 흔한 낱말을 가려낸다. 이번 작업의 모든 벡터에 같은 가중치를 쓴다
+    if isinstance(embedder, TermHashEmbedder):
+        embedder = await asyncio.to_thread(embedder.fitted, [r.text for r in records])
     vectors = await asyncio.to_thread(embedder.embed, [r.text for r in records])
 
     await ctx.report("attributes", 45)
@@ -518,6 +529,13 @@ async def analyze_complaints(ctx: JobContext) -> None:
     if deep_client is not None:
         ai["naming"] = deep_client.usage.to_record()
     results = ResultRepository(db, ctx.job.owner_id)
+    # 민원 분석 결과가 최신 분석 버전이 되므로, 앞선 파일 진단(열·통계·품질 점수)을 이어받아야
+    # 파일 상세 화면이 비지 않는다. 이번에 다시 계산한 종류의 문제는 이번 값으로 바꾼다
+    latest_result = await results.get_latest(ctx.file.id, "analysis")
+    previous_analysis = latest_result.analysis if latest_result else {}
+    previous_quality = latest_result.quality if latest_result else QualityResult()
+    new_types = {issue.type for issue in issues} | {"needs_review"}
+    kept_issues = [i for i in previous_quality.issues if i.type not in new_types]
     await results.insert(
         ResultDocument(
             owner_id=ctx.job.owner_id,
@@ -525,8 +543,9 @@ async def analyze_complaints(ctx: JobContext) -> None:
             job_id=ctx.job.id,
             result_type="analysis",
             version=await results.next_version(ctx.file.id, "analysis"),
-            quality=QualityResult(issues=issues),
+            quality=previous_quality.model_copy(update={"issues": kept_issues + issues}),
             analysis={
+                **previous_analysis,
                 **extraction.info,
                 "complaint": summary,
                 "artifacts": [{"kind": "embeddings", "storageKey": vectors_storage_key}],

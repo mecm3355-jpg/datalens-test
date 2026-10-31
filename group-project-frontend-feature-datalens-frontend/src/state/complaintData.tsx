@@ -128,6 +128,7 @@ function deriveIssues(complaints: Complaint[]): Issue[] {
 type ComplaintDataValue = {
   loading: boolean;
   error: string | null;
+  reload: () => Promise<void>;
   taxonomyVersion: number;
   complaints: Complaint[];
   categories: Category[];
@@ -185,6 +186,7 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ComplaintDataValue>(() => ({
     loading,
     error,
+    reload: load,
     taxonomyVersion,
     complaints,
     categories,

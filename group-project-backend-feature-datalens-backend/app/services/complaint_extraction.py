@@ -7,12 +7,19 @@
 """
 
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from app.core.errors import AppError
-from app.processors.document import DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS, OcrOptions, open_document
+from app.processors.document import (
+    DOCUMENT_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    DocLine,
+    OcrOptions,
+    open_document,
+)
 from app.processors.splitter import FormRule, split_by_form
 from app.processors.tabular import TABULAR_EXTENSIONS, Cell, open_table
 from app.processors.text import TEXT_EXTENSIONS, open_text
@@ -176,6 +183,50 @@ def _from_table(path: Path, extension: str, request: ComplaintAnalysisRequest) -
     return result
 
 
+def _find_rule(request: ComplaintAnalysisRequest, rules: dict[str, FormRule]) -> FormRule | None:
+    """요청의 분리 규칙을 찾는다. 없는 이름이면 파일 전체가 한 건이 되지 않게 오류로 알린다.
+
+    파라미터:
+        request: 분리 규칙 이름
+        rules: 분리 규칙 목록
+    """
+    if request.split_rule is None:
+        return None
+    rule = rules.get(request.split_rule)
+    if rule is None:
+        raise AppError("SPLIT_RULE_NOT_FOUND", f"분리 규칙이 없습니다: {request.split_rule}", 422)
+    return rule
+
+
+def _split_forms(
+    lines: Iterable[DocLine],
+    rule: FormRule,
+    request: ComplaintAnalysisRequest,
+    result: Extraction,
+) -> None:
+    """줄을 규칙대로 나눠 민원 레코드로 쌓는다. 페이지·OCR 신뢰도는 사람 검수에 쓰려고 남긴다.
+
+    파라미터:
+        lines: 문서의 줄
+        rule: 분리 규칙
+        request: 고정값
+        result: 레코드를 쌓을 추출 결과
+    """
+    for form in split_by_form(lines, rule):
+        received = form.fields.get(rule.received_field) if rule.received_field else None
+        result.records.append(
+            RawComplaint(
+                text=form.fields[rule.content_field],
+                content_type=rule.content_type,
+                locator={"page": form.page} if form.page is not None else {},
+                confidence=form.confidence,
+                received_at=_date(received) if received else None,
+                region=request.constants.region,
+                source_category=request.constants.source_category,
+            )
+        )
+
+
 def _from_document(
     path: Path,
     extension: str,
@@ -192,33 +243,13 @@ def _from_document(
         ocr: OCR 설정
         rules: 분리 규칙 목록
     """
-    # 요청에 분리 규칙 이름이 있으면 설정 파일에 있는지 먼저 확인한다. 없는 이름으로 파일 전체를
-    # 한 건으로 처리해 버리면 결과가 크게 틀어지므로 오류로 알린다
-    rule: FormRule | None = None
-    if request.split_rule is not None:
-        rule = rules.get(request.split_rule)
-        if rule is None:
-            raise AppError(
-                "SPLIT_RULE_NOT_FOUND", f"분리 규칙이 없습니다: {request.split_rule}", 422
-            )
+    rule = _find_rule(request, rules)
     result = Extraction()
     with open_document(path, extension, ocr) as document:
         # 한 파일에 같은 서식의 민원이 반복되면(예: 국민신문고 PDF) 분리 규칙으로 한 건씩 나눈다.
         # 페이지·OCR 신뢰도를 함께 남겨 사람 검수 때 원문 위치로 돌아갈 수 있게 한다
         if rule is not None:
-            for form in split_by_form(document.entries, rule):
-                received = form.fields.get(rule.received_field) if rule.received_field else None
-                result.records.append(
-                    RawComplaint(
-                        text=form.fields[rule.content_field],
-                        content_type=rule.content_type,
-                        locator={"page": form.page} if form.page is not None else {},
-                        confidence=form.confidence,
-                        received_at=_date(received) if received else None,
-                        region=request.constants.region,
-                        source_category=request.constants.source_category,
-                    )
-                )
+            _split_forms(document.entries, rule, request, result)
         else:
             # 규칙이 없으면 파일 하나를 민원 한 건으로 본다. OCR 신뢰도는 OCR한 조각만 평균 낸다
             # (텍스트 레이어에서 읽은 조각은 신뢰도가 없다)
@@ -256,16 +287,24 @@ def _from_document(
     return result
 
 
-def _from_text(path: Path, extension: str, request: ComplaintAnalysisRequest) -> Extraction:
-    """텍스트 파일을 빈 줄로 나눠 읽는다(PRD 7.6 TXT).
+def _from_text(
+    path: Path, extension: str, request: ComplaintAnalysisRequest, rules: dict[str, FormRule]
+) -> Extraction:
+    """텍스트 파일을 분리 규칙(있으면, 브라우저 OCR 결과 등)이나 빈 줄로 나눠 읽는다(PRD 7.6 TXT).
 
     파라미터:
         path: 원본 경로
         extension: 확장자
-        request: 고정값
+        request: 고정값·분리 규칙 이름
+        rules: 분리 규칙 목록
     """
+    rule = _find_rule(request, rules)
     result = Extraction()
     with open_text(path, extension) as text:
+        if rule is not None:
+            _split_forms((DocLine(text=line) for line in text.lines), rule, request, result)
+            result.info = {"format": text.format, "encoding": text.encoding}
+            return result
         block: list[str] = []
         start = 1
         # 끝에 빈 줄 하나를 덧붙여, 파일이 빈 줄 없이 끝나도 마지막 덩어리가 저장되게 한다
@@ -384,7 +423,7 @@ def extract_complaints(
     elif extension in DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS:
         result = _from_document(path, extension, request, ocr, rules)
     elif extension in TEXT_EXTENSIONS:
-        result = _from_text(path, extension, request)
+        result = _from_text(path, extension, request, rules)
     else:
         raise AppError(
             "ANALYSIS_NOT_SUPPORTED", f"{extension} 파일은 민원 분석을 지원하지 않습니다.", 422

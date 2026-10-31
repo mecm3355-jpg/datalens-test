@@ -238,3 +238,81 @@ def test_analysis_request_is_validated(db_client: TestClient) -> None:
         json={"decision": "held", "decidedBy": "x"},
     )
     assert missing.status_code == 404
+
+
+def test_complaint_analysis_keeps_file_diagnosis(db_client: TestClient) -> None:
+    """민원 분석 뒤에도 최신 분석 결과에 파일 진단(열·품질 점수)이 남아 화면이 비지 않는다."""
+    body = csv_bytes(first_month())
+    file_id = db_client.post("/api/v1/files", files={"file": ("c.csv", body, "text/csv")}).json()[
+        "data"
+    ]["fileId"]
+    run_worker(db_client)
+    before = db_client.get(f"/api/v1/files/{file_id}/analysis").json()["data"]
+
+    analyze(db_client, file_id)
+
+    after = db_client.get(f"/api/v1/files/{file_id}/analysis").json()["data"]
+    assert "complaint" in after["analysis"]
+    assert after["analysis"]["columns"] == before["analysis"]["columns"]
+    assert after["quality"]["score"] == before["quality"]["score"]
+
+
+def test_scan_without_ocr_says_ocr_is_missing(db_client: TestClient) -> None:
+    """글자 없는 PDF를 OCR 없는 서버에서 분석하면 형식 오류가 아니라 OCR 없음으로 알린다."""
+    # 빈 페이지 하나짜리 최소 PDF: 글자 층이 없어 스캔본과 같게 읽힌다
+    objects = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>",
+    ]
+    body = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, content in enumerate(objects, 1):
+        offsets.append(len(body))
+        body += b"%d 0 obj\n%s\nendobj\n" % (number, content)
+    start = len(body)
+    body += b"xref\n0 4\n0000000000 65535 f \n"
+    body += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    body += b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % start
+    file_id = db_client.post(
+        "/api/v1/files", files={"file": ("scan.pdf", bytes(body), "application/pdf")}
+    ).json()["data"]["fileId"]
+    run_worker(db_client)
+
+    started = db_client.post(
+        f"/api/v1/files/{file_id}/analysis",
+        json={"type": "complaint", "splitRule": "sinmungo", "attributeMethod": "rule"},
+    )
+    assert started.status_code == 202
+    run_worker(db_client)
+
+    job = db_client.get(f"/api/v1/jobs/{started.json()['data']['jobId']}").json()["data"]
+    assert job["status"] == "failed"
+    assert job["error"]["code"] == "OCR_NOT_AVAILABLE"
+
+
+def test_ocr_text_file_is_split_by_rule(db_client: TestClient) -> None:
+    """브라우저 OCR 결과(텍스트 파일)도 분리 규칙으로 민원별로 나뉜다."""
+    forms = [
+        f"번호 {n}\n제목 가로등 고장 신고 {n}\n처리기관 포항시\n등록일 2026-10-2{n}\n조회수 3"
+        for n in range(1, 4)
+    ]
+    body = "\n".join(forms).encode()
+    file_id = db_client.post(
+        "/api/v1/files", files={"file": ("a.pdf.ocr.txt", body, "text/plain")}
+    ).json()["data"]["fileId"]
+    run_worker(db_client)
+
+    started = db_client.post(
+        f"/api/v1/files/{file_id}/analysis",
+        json={"type": "complaint", "splitRule": "sinmungo", "attributeMethod": "rule"},
+    )
+    assert started.status_code == 202
+    run_worker(db_client)
+
+    items = db_client.get("/api/v1/complaints").json()["data"]["items"]
+    mine = [item for item in items if item["fileId"] == file_id]
+    assert sorted(item["contentMasked"] for item in mine) == [
+        f"가로등 고장 신고 {n}" for n in range(1, 4)
+    ]
+    assert {item["receivedAt"][:10] for item in mine} == {f"2026-10-2{n}" for n in range(1, 4)}

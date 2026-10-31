@@ -63,6 +63,13 @@ export type ApiSuggestion = {
   expectedChanges: number;
 };
 
+export type ComplaintMapping = {
+  title?: string;
+  content?: string;
+  receivedAt?: string;
+  region?: string;
+};
+
 export type ApiPreview = {
   fileId: string;
   kind: "table" | "text";
@@ -299,6 +306,19 @@ export const datalensApi = {
       await apiRequest<ApiResponse<ApiFileUploadResult>>(apiRoutes.files, {
         method: "POST",
         data: form,
+      }),
+    );
+  },
+  /** AI 없이 규칙 방식으로 민원 분석을 시작합니다. mapping은 표 파일의 공통 필드별 열 이름, splitRule은 문서를 민원별로 나눌 규칙 이름입니다. */
+  async startComplaintAnalysis(
+    fileId: string,
+    mapping: ComplaintMapping,
+    splitRule?: string,
+  ): Promise<{ jobId: string }> {
+    return unwrap(
+      await apiRequest<ApiResponse<{ jobId: string }>>(apiRoutes.analysis(fileId), {
+        method: "POST",
+        data: { type: "complaint", mapping, splitRule, attributeMethod: "rule" },
       }),
     );
   },

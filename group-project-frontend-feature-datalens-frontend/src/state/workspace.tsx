@@ -1,3 +1,4 @@
+import type { ComplaintMapping } from "../api/datalens";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   candidates,
@@ -62,6 +63,8 @@ type WorkspaceValue = {
   addMapping: (mapping: Omit<Mapping, "id" | "createdAt">) => void;
   analysisRequested: (fileId: string) => boolean;
   requestAnalysis: (fileId: string) => Promise<void>;
+  requestComplaintAnalysis: (fileId: string, mapping: ComplaintMapping, splitRule?: string) => Promise<void>;
+  analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
   cleaningDecision: (fileId: string, ruleId: string) => CleaningDecision;
   decideCleaningRule: (fileId: string, ruleId: string, decision: CleaningDecision) => void;
   cleaningRules: (fileId: string) => CleaningRule[];
@@ -275,6 +278,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       requestAnalysis: async (fileId) => {
         if (DATA_MODE === "api") return api.requestAnalysis(fileId);
         setRequested((current) => ({ ...current, [fileId]: true }));
+      },
+      requestComplaintAnalysis: async (fileId, mapping, splitRule) => {
+        if (DATA_MODE === "api") return api.requestComplaintAnalysis(fileId, mapping, splitRule);
+        setRequested((current) => ({ ...current, [fileId]: true }));
+      },
+      analyzeOcrText: async (originalName, text, splitRule) => {
+        if (DATA_MODE === "api") return api.analyzeOcrText(originalName, text, splitRule);
+        throw new AppError("DEMO_NOT_SUPPORTED", "데모 모드에서는 스캔 PDF를 분석할 수 없습니다.");
       },
       cleaningDecision: (fileId, ruleId) => cleaningDecisions[`${fileId}:${ruleId}`]
         ?? (DATA_MODE === "api" && api.appliedCleaning[fileId]?.includes(ruleId)

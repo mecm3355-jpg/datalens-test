@@ -1,3 +1,4 @@
+import type { ComplaintMapping } from "../api/datalens";
 import { useCallback, useEffect, useState } from "react";
 import { AppError } from "../api/AppError";
 import { datalensApi, type ApiDashboardSummary, type ApiJob } from "../api/datalens";
@@ -52,6 +53,8 @@ export type ApiWorkspace = {
   addFiles: (files: File[], callbacks?: UploadLifecycleCallbacks) => Promise<UploadResult[]>;
   retryFileProcessing: (fileId: string) => Promise<boolean>;
   requestAnalysis: (fileId: string) => Promise<void>;
+  requestComplaintAnalysis: (fileId: string, mapping: ComplaintMapping, splitRule?: string) => Promise<void>;
+  analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
   ensureFileData: (fileId: string) => Promise<void>;
   applyCleaningRules: (fileId: string, rules: CleaningRule[]) => Promise<void>;
   downloadCleanedFile: (file: DataFile, format: "csv" | "json") => Promise<void>;
@@ -267,6 +270,31 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     await ensureFileData(fileId);
   }, [ensureFileData, pollJob]);
 
+  const requestComplaintAnalysis = useCallback(async (fileId: string, mapping: ComplaintMapping, splitRule?: string): Promise<void> => {
+    const started = await datalensApi.startComplaintAnalysis(fileId, mapping, splitRule);
+    const job = await pollJob(started.jobId, fileId);
+    if (job.status === "failed") {
+      throw new AppError(job.error?.code ?? "ANALYSIS_FAILED", job.error?.message ?? "민원 분석에 실패했습니다.");
+    }
+    await ensureFileData(fileId);
+  }, [ensureFileData, pollJob]);
+
+  // 브라우저 OCR 결과를 텍스트 파일로 올려 진단이 끝나면 민원 분석까지 이어 간다. 새 파일 ID를 돌려준다.
+  const analyzeOcrText = useCallback(async (originalName: string, text: string, splitRule?: string): Promise<string> => {
+    const file = new File([text], `${originalName}.ocr.txt`, { type: "text/plain" });
+    const uploaded = await datalensApi.upload(file);
+    const serverFile = await datalensApi.getFile(uploaded.fileId);
+    setFiles((current) => [toDataFile(serverFile), ...current]);
+    if (serverFile.lastJobId) {
+      const diagnosis = await pollJob(serverFile.lastJobId, serverFile.fileId);
+      if (diagnosis.status === "failed") {
+        throw new AppError(diagnosis.error?.code ?? "PROCESS_FAILED", diagnosis.error?.message ?? "글자 파일 진단에 실패했습니다.");
+      }
+    }
+    await requestComplaintAnalysis(serverFile.fileId, {}, splitRule);
+    return serverFile.fileId;
+  }, [pollJob, requestComplaintAnalysis]);
+
   const applyCleaningRules = useCallback(async (fileId: string, rules: CleaningRule[]) => {
     const payloads = rules.flatMap((rule) => (rule.backendRule ? [rule.backendRule] : []));
     if (payloads.length !== rules.length) {
@@ -306,6 +334,8 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
       }
     },
     requestAnalysis,
+    requestComplaintAnalysis,
+    analyzeOcrText,
     ensureFileData,
     applyCleaningRules,
     downloadCleanedFile,
