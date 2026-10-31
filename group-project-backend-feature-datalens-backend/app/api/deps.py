@@ -13,6 +13,7 @@ from app.repositories.files import FileRepository
 from app.repositories.jobs import JobRepository
 from app.repositories.results import ResultRepository
 from app.repositories.reviews import ReviewRepository
+from app.repositories.taxonomy_changes import TaxonomyChangeRepository
 from app.schemas.user import UserDocument
 from app.services.cleaning_service import CleaningService
 from app.services.complaint_service import ComplaintService
@@ -36,11 +37,11 @@ def get_app_settings(request: Request) -> Settings:
     return settings
 
 
-def get_owner_id(
+def get_current_user(
     request: Request,
     settings: Annotated[Settings, Depends(get_app_settings)],
-) -> ObjectId | None:
-    """인증된 사용자의 소유자 ID를 반환한다. 인증이 꺼진 로컬 모드는 None이다.
+) -> UserDocument | None:
+    """인증된 사용자를 반환한다. 인증이 꺼진 로컬 모드는 None이다.
 
     파라미터:
         request: 인증 미들웨어가 사용자를 넣은 현재 요청
@@ -51,45 +52,28 @@ def get_owner_id(
     user = getattr(request.state, "current_user", None)
     if not isinstance(user, UserDocument):
         raise AppError("AUTH_REQUIRED", "로그인이 필요합니다.", 401)
-    return user.id
+    return user
+
+
+CurrentUser = Annotated[UserDocument | None, Depends(get_current_user)]
+
+
+def require_admin(user: CurrentUser) -> UserDocument | None:
+    """인증 운영 모드에서는 관리자만 상태 변경 API를 실행하게 한다."""
+    if user is not None and user.role != "admin":
+        raise AppError("ADMIN_REQUIRED", "관리자 권한이 필요합니다.", 403)
+    return user
+
+
+AdminUser = Annotated[UserDocument | None, Depends(require_admin)]
+
+
+def get_owner_id(user: CurrentUser) -> ObjectId | None:
+    """인증된 사용자의 소유자 ID를 반환한다. 인증이 꺼진 로컬 모드는 None이다."""
+    return None if user is None else user.id
 
 
 OwnerId = Annotated[ObjectId | None, Depends(get_owner_id)]
-
-
-def _is_admin(request: Request) -> bool:
-    """현재 사용자가 관리자인지 확인한다.
-
-    파라미터:
-        request: 인증 미들웨어가 사용자를 넣은 현재 요청
-    """
-    user = getattr(request.state, "current_user", None)
-    return isinstance(user, UserDocument) and user.role == "admin"
-
-
-def get_decider_name(
-    request: Request,
-    settings: Annotated[Settings, Depends(get_app_settings)],
-) -> str | None:
-    """공유 카테고리 체계를 결정할 관리자의 이름을 돌려준다. 관리자가 아니면 403.
-
-    인증이 꺼진 로컬 모드는 None이며, 이때는 요청 본문의 결정자를 그대로 쓴다.
-
-    파라미터:
-        request: 인증 미들웨어가 사용자를 넣은 현재 요청
-        settings: 앱 인증 설정
-    """
-    if not settings.auth_required:
-        return None
-    user = getattr(request.state, "current_user", None)
-    if not isinstance(user, UserDocument):
-        raise AppError("AUTH_REQUIRED", "로그인이 필요합니다.", 401)
-    if user.role != "admin":
-        raise AppError("ADMIN_REQUIRED", "관리자만 결정할 수 있습니다.", 403)
-    return user.display_name
-
-
-DeciderName = Annotated[str | None, Depends(get_decider_name)]
 
 
 def get_file_service(
@@ -203,7 +187,7 @@ def get_dataset_service(
 
 
 def get_complaint_service(
-    request: Request,
+    user: CurrentUser,
     mongo: Annotated[Mongo, Depends(get_mongo)],
     settings: Annotated[Settings, Depends(get_app_settings)],
     owner_id: OwnerId,
@@ -211,13 +195,13 @@ def get_complaint_service(
     """요청마다 민원 분석 서비스를 만든다.
 
     파라미터:
-        request: 인증 미들웨어가 사용자를 넣은 현재 요청
+        user: 로그인한 사용자(인증이 꺼져 있으면 None)
         mongo: Mongo 인스턴스
         settings: 앱 설정
     """
     # 결정 권한은 관리자에게만 있으므로 관리자는 모든 사용자의 민원·후보·검토를 봐야 한다.
     # 파일·작업은 그대로 본인 것만 다룬다
-    scope = None if _is_admin(request) else owner_id
+    scope = None if user is not None and user.role == "admin" else owner_id
     return ComplaintService(
         FileRepository(mongo.db, owner_id),
         JobRepository(mongo.db, owner_id),
@@ -225,6 +209,7 @@ def get_complaint_service(
         CategoryRepository(mongo.db),
         CandidateRepository(mongo.db, scope),
         ReviewRepository(mongo.db, scope),
+        TaxonomyChangeRepository(mongo.db),
         create_storage(settings.storage_provider, settings.storage_root),
         settings,
     )

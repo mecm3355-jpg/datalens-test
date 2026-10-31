@@ -9,6 +9,7 @@ from app.repositories.issues import IssueRepository
 from app.repositories.jobs import JobRepository
 from app.repositories.results import ResultRepository
 from app.repositories.reviews import ReviewRepository
+from app.repositories.taxonomy_changes import TaxonomyChangeRepository
 from app.repositories.users import PasswordResetRepository, SessionRepository, UserRepository
 
 
@@ -35,5 +36,6 @@ async def ensure_indexes(db: AsyncDatabase[Document]) -> None:
         ComplaintRepository(db),
         ReviewRepository(db),
         IssueRepository(db),
+        TaxonomyChangeRepository(db),
     ):
         await repository.ensure_indexes()

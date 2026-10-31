@@ -1,9 +1,14 @@
-import type { ComplaintMapping } from "../api/datalens";
 import { useCallback, useEffect, useState } from "react";
 import { AppError } from "../api/AppError";
-import { datalensApi, type ApiDashboardSummary, type ApiJob } from "../api/datalens";
+import {
+  datalensApi,
+  type ApiDashboardSummary,
+  type ApiJob,
+  type ComplaintAnalysisOptions,
+} from "../api/datalens";
 import { cleanRuleKey, toArtifact, toDataFile } from "../features/files/apiAdapters";
-import type { CleaningRule, DataFile, DemoCleaningArtifact } from "../types";
+import { notifyComplaintDataChanged } from "../lib/events";
+import type { CleaningRule, DataFile, DataReport, DemoCleaningArtifact } from "../types";
 
 const POLL_INTERVAL_MS = 1_500;
 const MAX_POLL_ATTEMPTS = 1_200;
@@ -47,14 +52,15 @@ export type ApiWorkspace = {
   artifacts: Record<string, DemoCleaningArtifact>;
   jobsByFile: Record<string, ApiJob>;
   appliedCleaning: Record<string, string[]>;
+  reports: Record<string, DataReport>;
   loading: boolean;
   error: string | null;
   dashboard: ApiDashboardSummary | null;
   addFiles: (files: File[], callbacks?: UploadLifecycleCallbacks) => Promise<UploadResult[]>;
-  retryFileProcessing: (fileId: string) => Promise<boolean>;
-  requestAnalysis: (fileId: string) => Promise<void>;
-  requestComplaintAnalysis: (fileId: string, mapping: ComplaintMapping, splitRule?: string) => Promise<void>;
+  retryFileProcessing: (fileId: string) => Promise<void>;
+  requestAnalysis: (fileId: string, options?: ComplaintAnalysisOptions) => Promise<void>;
   analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
+  requestReport: (fileId: string) => Promise<void>;
   ensureFileData: (fileId: string) => Promise<void>;
   applyCleaningRules: (fileId: string, rules: CleaningRule[]) => Promise<void>;
   downloadCleanedFile: (file: DataFile, format: "csv" | "json") => Promise<void>;
@@ -67,6 +73,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   const [artifacts, setArtifacts] = useState<Record<string, DemoCleaningArtifact>>({});
   const [jobsByFile, setJobsByFile] = useState<Record<string, ApiJob>>({});
   const [appliedCleaning, setAppliedCleaning] = useState<Record<string, string[]>>({});
+  const [reports, setReports] = useState<Record<string, DataReport>>({});
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<ApiDashboardSummary | null>(null);
@@ -103,7 +110,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         }
       }
       if (serverFile.status !== "completed" || !serverFile.processingCapabilities.qualityCheck) return;
-      const [preview, analysis, suggestions, versions] = await Promise.all([
+      const [preview, analysis, suggestions, versions, report] = await Promise.all([
         datalensApi.preview(fileId),
         datalensApi.analysis(fileId),
         serverFile.processingCapabilities.cleaning
@@ -112,6 +119,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         serverFile.processingCapabilities.cleaning
           ? datalensApi.versions(fileId)
           : Promise.resolve([]),
+        datalensApi.latestReport(fileId).catch(() => null),
       ]);
       const latestCleaning = versions.find((version) => version.resultType === "cleaning");
       const cleanedPreview = latestCleaning
@@ -119,6 +127,12 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         : null;
       const artifact = toArtifact(preview, analysis, suggestions, cleanedPreview);
       setArtifacts((current) => ({ ...current, [fileId]: artifact }));
+      setReports((current) => {
+        if (report) return { ...current, [fileId]: report };
+        const next = { ...current };
+        delete next[fileId];
+        return next;
+      });
       setAppliedCleaning((current) => {
         if (!latestCleaning) {
           const next = { ...current };
@@ -133,15 +147,16 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
             .map((rule) => rule.id),
         };
       });
+      const columns = Array.isArray(analysis.analysis.columns)
+        ? analysis.analysis.columns.flatMap((column) => {
+            if (!column || typeof column !== "object") return [];
+            const name = (column as Record<string, unknown>).name;
+            return typeof name === "string" ? [name] : [];
+          })
+        : preview.columns ?? Object.keys(artifact.rows[0] ?? {});
       patchFile(fileId, {
         rowCount: typeof analysis.analysis.rowCount === "number" ? analysis.analysis.rowCount : null,
-        columns: Array.isArray(analysis.analysis.columns)
-          ? analysis.analysis.columns.flatMap((column) => {
-              if (!column || typeof column !== "object") return [];
-              const name = (column as Record<string, unknown>).name;
-              return typeof name === "string" ? [name] : [];
-            })
-          : [],
+        columns,
       });
     } catch (loadError) {
       patchFile(fileId, { processingError: messageOf(loadError) });
@@ -261,7 +276,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     return ids;
   }, [ensureFileData, patchFile, pollJob]);
 
-  const requestAnalysis = useCallback(async (fileId: string): Promise<void> => {
+  const retryFileProcessing = useCallback(async (fileId: string): Promise<void> => {
     const started = await datalensApi.process(fileId);
     const job = await pollJob(started.jobId, fileId);
     if (job.status === "failed") {
@@ -270,13 +285,17 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     await ensureFileData(fileId);
   }, [ensureFileData, pollJob]);
 
-  const requestComplaintAnalysis = useCallback(async (fileId: string, mapping: ComplaintMapping, splitRule?: string): Promise<void> => {
-    const started = await datalensApi.startComplaintAnalysis(fileId, mapping, splitRule);
+  const requestAnalysis = useCallback(async (
+    fileId: string,
+    options?: ComplaintAnalysisOptions,
+  ): Promise<void> => {
+    const started = await datalensApi.startComplaintAnalysis(fileId, options);
     const job = await pollJob(started.jobId, fileId);
     if (job.status === "failed") {
       throw new AppError(job.error?.code ?? "ANALYSIS_FAILED", job.error?.message ?? "민원 분석에 실패했습니다.");
     }
     await ensureFileData(fileId);
+    notifyComplaintDataChanged();
   }, [ensureFileData, pollJob]);
 
   // 브라우저 OCR 결과를 텍스트 파일로 올려 진단이 끝나면 민원 분석까지 이어 간다. 새 파일 ID를 돌려준다.
@@ -291,9 +310,20 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         throw new AppError(diagnosis.error?.code ?? "PROCESS_FAILED", diagnosis.error?.message ?? "글자 파일 진단에 실패했습니다.");
       }
     }
-    await requestComplaintAnalysis(serverFile.fileId, {}, splitRule);
+    await requestAnalysis(serverFile.fileId, { splitRule });
     return serverFile.fileId;
-  }, [pollJob, requestComplaintAnalysis]);
+  }, [pollJob, requestAnalysis]);
+
+  const requestReport = useCallback(async (fileId: string): Promise<void> => {
+    const started = await datalensApi.createReport(fileId);
+    const job = await pollJob(started.jobId, fileId);
+    if (job.status === "failed") {
+      throw new AppError(job.error?.code ?? "REPORT_FAILED", job.error?.message ?? "리포트 생성에 실패했습니다.");
+    }
+    const report = await datalensApi.latestReport(fileId);
+    if (!report) throw new AppError("REPORT_NOT_FOUND", "생성된 리포트를 찾을 수 없습니다.");
+    setReports((current) => ({ ...current, [fileId]: report }));
+  }, [pollJob]);
 
   const applyCleaningRules = useCallback(async (fileId: string, rules: CleaningRule[]) => {
     const payloads = rules.flatMap((rule) => (rule.backendRule ? [rule.backendRule] : []));
@@ -320,22 +350,15 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     artifacts,
     jobsByFile,
     appliedCleaning,
+    reports,
     loading,
     error,
     dashboard,
     addFiles,
-    retryFileProcessing: async (fileId) => {
-      try {
-        await requestAnalysis(fileId);
-        return true;
-      } catch (retryError) {
-        patchFile(fileId, { processingError: messageOf(retryError) });
-        return false;
-      }
-    },
+    retryFileProcessing,
     requestAnalysis,
-    requestComplaintAnalysis,
     analyzeOcrText,
+    requestReport,
     ensureFileData,
     applyCleaningRules,
     downloadCleanedFile,
@@ -346,6 +369,9 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         Object.entries(current).filter(([id]) => id !== fileId),
       ));
       setJobsByFile((current) => Object.fromEntries(
+        Object.entries(current).filter(([id]) => id !== fileId),
+      ));
+      setReports((current) => Object.fromEntries(
         Object.entries(current).filter(([id]) => id !== fileId),
       ));
       void refreshDashboard();

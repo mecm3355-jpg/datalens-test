@@ -1,4 +1,3 @@
-import { useSession } from "../state/session";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Button } from "../components/Button";
@@ -6,18 +5,18 @@ import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import { REVIEW_REASON_LABEL } from "../lib/labels";
 import { useComplaintData } from "../state/complaintData";
+import { useSession } from "../state/session";
 
 export function ReviewsPage() {
-  const { user } = useSession();
-  // 로그인 사용자가 없으면 데모·인증 꺼짐 모드이므로 그대로 둔다. 실제 권한은 서버가 검사한다
-  const canDecide = !user || user.role === "admin";
   const { reviews, complaints, categories, categoryById, confirmReview, loading, error } = useComplaintData();
+  const { user } = useSession();
+  const canManage = user?.role === "admin" || user === null;
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
   const rows = reviews.map((review) => ({
     review,
     complaint: complaints.find((item) => item.id === review.complaintId),
-    state: { status: review.status, reviewedCategoryId: null as string | null },
+    state: { status: review.status, reviewedCategoryId: review.reviewedCategoryId ?? null },
   }));
   const pending = rows.filter((row) => row.state.status === "pending").length;
 
@@ -68,8 +67,14 @@ export function ReviewsPage() {
             header: "결정",
             render: (row) => {
               if (row.state.status === "done") {
-                return categoryById(row.state.reviewedCategoryId)?.name ?? "확정";
+                return (
+                  <span>
+                    {categoryById(row.state.reviewedCategoryId)?.name ?? "미배정 확정"}
+                    {row.review.reviewedBy ? <span className="caption"> · {row.review.reviewedBy}</span> : null}
+                  </span>
+                );
               }
+              if (!canManage) return <span className="caption">관리자만 확정할 수 있습니다.</span>;
               const selected = choice[row.review.id] ?? row.review.suggestedCategoryId ?? categories[0]?.categoryId ?? "";
               return (
                 <div className="cluster">
@@ -87,7 +92,7 @@ export function ReviewsPage() {
                       </option>
                     ))}
                   </select>
-                  <Button disabled={!canDecide} onClick={() => {
+                  <Button onClick={() => {
                     void confirmReview(row.review.id, selected)
                       .then(() => setActionError(null))
                       .catch((reviewError: unknown) => {
