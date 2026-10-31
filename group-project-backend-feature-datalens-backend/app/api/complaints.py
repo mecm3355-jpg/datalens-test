@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_complaint_service
+from app.api.deps import DeciderName, get_complaint_service
 from app.schemas.common import ApiResponse, ok
 from app.schemas.complaint import AssignStatus, CandidateDecision
 from app.schemas.complaint_api import (
@@ -109,16 +109,19 @@ async def list_candidates(
     response_model=ApiResponse[CandidateDecisionResult],
 )
 async def decide_candidate(
-    service: Service, candidate_id: str, request: CandidateDecisionRequest
+    service: Service, decider: DeciderName, candidate_id: str, request: CandidateDecisionRequest
 ) -> ApiResponse[CandidateDecisionResult]:
-    """후보를 승인·보류·기존 카테고리에 합친다. 승인하면 체계 버전이 올라간다.
+    """후보를 승인·보류·기존 카테고리에 합친다(관리자만). 승인하면 체계 버전이 올라간다.
 
     파라미터:
         service: 민원 분석 서비스
+        decider: 로그인한 관리자 이름(인증이 꺼져 있으면 None)
         candidate_id: 후보 ID
         request: 결정 내용
     """
-    # 승인 권한·인증은 아직 미정(PRD 12장)이라 별도 권한 확인 없이 결정을 받는다
+    # 이력이 정확하도록 로그인 상태에서는 요청 본문이 아닌 실제 사용자 이름을 남긴다
+    if decider is not None:
+        request = request.model_copy(update={"decided_by": decider})
     return ok(await service.decide(candidate_id, request))
 
 
@@ -153,14 +156,17 @@ async def list_reviews(
 
 @router.post("/reviews/{review_id}", response_model=ApiResponse[ReviewItem])
 async def save_review(
-    service: Service, review_id: str, request: ReviewDecisionRequest
+    service: Service, decider: DeciderName, review_id: str, request: ReviewDecisionRequest
 ) -> ApiResponse[ReviewItem]:
-    """검토 결과를 저장한다(카테고리 확정 또는 현재 배정 확인).
+    """검토 결과를 저장한다(관리자만. 카테고리 확정 또는 현재 배정 확인).
 
     파라미터:
         service: 민원 분석 서비스
+        decider: 로그인한 관리자 이름(인증이 꺼져 있으면 None)
         review_id: 검토 ID
         request: 확정 카테고리와 검토자
     """
+    if decider is not None:
+        request = request.model_copy(update={"reviewed_by": decider})
     # 저장 응답은 검토 결과만 돌려주고 대상 민원은 다시 읽지 않는다(목록 API에서 본다)
     return ok(ReviewItem.from_document(await service.review(review_id, request), None))

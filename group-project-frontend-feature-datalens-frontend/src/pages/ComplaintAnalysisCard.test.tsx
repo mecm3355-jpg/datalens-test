@@ -72,6 +72,7 @@ describe("민원 분석 카드", () => {
     const base = workspace(start, []);
     useWorkspaceMock.mockReturnValue({
       ...base,
+      cleaningArtifact: vi.fn(() => ({ qualityIssues: [] })),
       files: [{ ...base.files[0], originalName: "민원.pdf", extension: "pdf", fileCategory: "document" }],
     });
     renderPage();
@@ -119,6 +120,38 @@ describe("민원 분석 카드", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("크기가 다른 파일");
     expect(readScannedPdf).not.toHaveBeenCalled();
+  });
+
+  it("문서는 진단 결과가 오기 전에는 시작할 수 없다", async () => {
+    const base = workspace(vi.fn(), []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      files: [{ ...base.files[0], originalName: "스캔.pdf", extension: "pdf", fileCategory: "document" }],
+    });
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "민원 분석 시작" })).toHaveProperty("disabled", true);
+    expect(screen.queryByLabelText("원본 PDF 선택")).toBeNull();
+  });
+
+  it("서버가 스캔본을 못 읽어 실패한 파일도 브라우저에서 읽을 수 있다", async () => {
+    const base = workspace(vi.fn(), []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      jobForFile: vi.fn(() => ({ status: "failed", stage: "parsing", progress: 10, error: { code: "OCR_NOT_AVAILABLE", message: "OCR 없음" } })),
+      files: [{ ...base.files[0], originalName: "스캔.pdf", extension: "pdf", fileCategory: "document", status: "failed" }],
+    });
+    renderPage();
+
+    expect(await screen.findByLabelText("원본 PDF 선택")).toBeTruthy();
+  });
+
+  it("API 모드에서는 저장되지 않는 컬럼 매핑 칸을 보여 주지 않는다", async () => {
+    useWorkspaceMock.mockReturnValue(workspace(vi.fn()));
+    renderPage();
+
+    await screen.findByRole("button", { name: "민원 분석 시작" });
+    expect(screen.queryByText("컬럼 매핑")).toBeNull();
   });
 
   it("내용이나 제목 열을 고르기 전에는 시작할 수 없다", async () => {

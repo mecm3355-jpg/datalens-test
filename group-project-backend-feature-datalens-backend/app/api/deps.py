@@ -57,6 +57,41 @@ def get_owner_id(
 OwnerId = Annotated[ObjectId | None, Depends(get_owner_id)]
 
 
+def _is_admin(request: Request) -> bool:
+    """현재 사용자가 관리자인지 확인한다.
+
+    파라미터:
+        request: 인증 미들웨어가 사용자를 넣은 현재 요청
+    """
+    user = getattr(request.state, "current_user", None)
+    return isinstance(user, UserDocument) and user.role == "admin"
+
+
+def get_decider_name(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> str | None:
+    """공유 카테고리 체계를 결정할 관리자의 이름을 돌려준다. 관리자가 아니면 403.
+
+    인증이 꺼진 로컬 모드는 None이며, 이때는 요청 본문의 결정자를 그대로 쓴다.
+
+    파라미터:
+        request: 인증 미들웨어가 사용자를 넣은 현재 요청
+        settings: 앱 인증 설정
+    """
+    if not settings.auth_required:
+        return None
+    user = getattr(request.state, "current_user", None)
+    if not isinstance(user, UserDocument):
+        raise AppError("AUTH_REQUIRED", "로그인이 필요합니다.", 401)
+    if user.role != "admin":
+        raise AppError("ADMIN_REQUIRED", "관리자만 결정할 수 있습니다.", 403)
+    return user.display_name
+
+
+DeciderName = Annotated[str | None, Depends(get_decider_name)]
+
+
 def get_file_service(
     mongo: Annotated[Mongo, Depends(get_mongo)],
     settings: Annotated[Settings, Depends(get_app_settings)],
@@ -168,6 +203,7 @@ def get_dataset_service(
 
 
 def get_complaint_service(
+    request: Request,
     mongo: Annotated[Mongo, Depends(get_mongo)],
     settings: Annotated[Settings, Depends(get_app_settings)],
     owner_id: OwnerId,
@@ -175,16 +211,20 @@ def get_complaint_service(
     """요청마다 민원 분석 서비스를 만든다.
 
     파라미터:
+        request: 인증 미들웨어가 사용자를 넣은 현재 요청
         mongo: Mongo 인스턴스
         settings: 앱 설정
     """
+    # 결정 권한은 관리자에게만 있으므로 관리자는 모든 사용자의 민원·후보·검토를 봐야 한다.
+    # 파일·작업은 그대로 본인 것만 다룬다
+    scope = None if _is_admin(request) else owner_id
     return ComplaintService(
         FileRepository(mongo.db, owner_id),
         JobRepository(mongo.db, owner_id),
-        ComplaintRepository(mongo.db, owner_id),
+        ComplaintRepository(mongo.db, scope),
         CategoryRepository(mongo.db),
-        CandidateRepository(mongo.db, owner_id),
-        ReviewRepository(mongo.db, owner_id),
+        CandidateRepository(mongo.db, scope),
+        ReviewRepository(mongo.db, scope),
         create_storage(settings.storage_provider, settings.storage_root),
         settings,
     )
