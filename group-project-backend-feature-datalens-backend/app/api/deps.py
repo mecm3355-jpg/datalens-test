@@ -13,6 +13,7 @@ from app.repositories.files import FileRepository
 from app.repositories.jobs import JobRepository
 from app.repositories.results import ResultRepository
 from app.repositories.reviews import ReviewRepository
+from app.repositories.taxonomy_changes import TaxonomyChangeRepository
 from app.schemas.user import UserDocument
 from app.services.cleaning_service import CleaningService
 from app.services.complaint_service import ComplaintService
@@ -36,11 +37,11 @@ def get_app_settings(request: Request) -> Settings:
     return settings
 
 
-def get_owner_id(
+def get_current_user(
     request: Request,
     settings: Annotated[Settings, Depends(get_app_settings)],
-) -> ObjectId | None:
-    """인증된 사용자의 소유자 ID를 반환한다. 인증이 꺼진 로컬 모드는 None이다.
+) -> UserDocument | None:
+    """인증된 사용자를 반환한다. 인증이 꺼진 로컬 모드는 None이다.
 
     파라미터:
         request: 인증 미들웨어가 사용자를 넣은 현재 요청
@@ -51,7 +52,25 @@ def get_owner_id(
     user = getattr(request.state, "current_user", None)
     if not isinstance(user, UserDocument):
         raise AppError("AUTH_REQUIRED", "로그인이 필요합니다.", 401)
-    return user.id
+    return user
+
+
+CurrentUser = Annotated[UserDocument | None, Depends(get_current_user)]
+
+
+def require_admin(user: CurrentUser) -> UserDocument | None:
+    """인증 운영 모드에서는 관리자만 상태 변경 API를 실행하게 한다."""
+    if user is not None and user.role != "admin":
+        raise AppError("ADMIN_REQUIRED", "관리자 권한이 필요합니다.", 403)
+    return user
+
+
+AdminUser = Annotated[UserDocument | None, Depends(require_admin)]
+
+
+def get_owner_id(user: CurrentUser) -> ObjectId | None:
+    """인증된 사용자의 소유자 ID를 반환한다. 인증이 꺼진 로컬 모드는 None이다."""
+    return None if user is None else user.id
 
 
 OwnerId = Annotated[ObjectId | None, Depends(get_owner_id)]
@@ -185,6 +204,7 @@ def get_complaint_service(
         CategoryRepository(mongo.db),
         CandidateRepository(mongo.db, owner_id),
         ReviewRepository(mongo.db, owner_id),
+        TaxonomyChangeRepository(mongo.db),
         create_storage(settings.storage_provider, settings.storage_root),
         settings,
     )

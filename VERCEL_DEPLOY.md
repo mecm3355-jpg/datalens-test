@@ -17,12 +17,16 @@ JOB_DISPATCH_MODE=vercel_queue
 CORS_ORIGINS=https://배포될도메인.vercel.app
 AUTH_REQUIRED=true
 AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_SAMESITE=lax
 AUTH_REGISTRATION_ENABLED=true
 AUTH_SESSION_SECONDS=28800
 AUTH_MAX_FAILED_ATTEMPTS=5
 AUTH_LOCKOUT_SECONDS=900
 AUTH_PASSWORD_RESET_SECONDS=1800
 AUTH_EXPOSE_RESET_TOKEN=false
+RESEND_API_KEY=re_...
+PASSWORD_RESET_FROM=DataLens <no-reply@your-domain.example>
+FRONTEND_URL=https://배포될도메인.vercel.app
 VITE_DATA_MODE=api
 VITE_UPLOAD_MODE=blob
 ```
@@ -36,8 +40,13 @@ VITE_UPLOAD_MODE=blob
   `JOB_DISPATCH_MODE`, `VITE_*`
 - Preview에는 운영 MongoDB Secret을 재사용하지 말고 별도 DB·계정을 사용한다.
 
-비밀번호 재설정 토큰 생성·사용 API는 포함되어 있지만 운영 메일 발송 공급자는 아직 연결하지
-않았다. `AUTH_EXPOSE_RESET_TOKEN=true`는 토큰을 응답에 노출하므로 로컬 확인에만 사용한다.
+비밀번호 재설정 메일은 Resend HTTP API로 발송한다. `RESEND_API_KEY`는 Secret으로,
+`PASSWORD_RESET_FROM`과 `FRONTEND_URL`은 Config로 등록한다. 발신 도메인은 Resend에서 먼저
+검증해야 한다. `AUTH_EXPOSE_RESET_TOKEN=true`는 토큰을 응답에 노출하므로 로컬 확인에만 사용한다.
+
+Queue 소비자는 백엔드 `pyproject.toml`의 Python Subscriber 하나만 사용한다. 같은 토픽을
+TypeScript Worker와 동시에 구독하면 각 소비자 그룹이 메시지를 따로 받아 중복 처리되므로,
+루트 `vercel.json`에는 별도 Queue Worker 서비스를 등록하지 않는다.
 
 Blob 연결 시 `BLOB_READ_WRITE_TOKEN`이 자동 등록된다. Azure OpenAI 기능을 쓸 때만
 `AZURE_OPENAI_*` 값을 추가한다. Python 함수 번들이 기본 한도를 넘을 때는
@@ -65,6 +74,9 @@ vercel --prod
 기존 방식은 유지된다. 프런트엔드는 `VITE_UPLOAD_MODE=server`, 백엔드는
 `STORAGE_PROVIDER=local`, `JOB_DISPATCH_MODE=local`을 사용하고 별도 worker를 실행한다.
 Vercel 전체 구성을 로컬에서 확인할 때는 상위 폴더에서 `vercel dev`를 실행한다.
+
+프런트엔드와 백엔드를 서로 다른 사이트로 독립 배포할 때만 `AUTH_COOKIE_SAMESITE=none`과
+`AUTH_COOKIE_SECURE=true`를 함께 사용하고, `CORS_ORIGINS`에는 정확한 프런트엔드 출처를 넣는다.
 
 ## Git 자동 배포 주의
 

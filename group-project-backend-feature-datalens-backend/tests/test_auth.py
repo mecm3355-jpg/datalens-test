@@ -1,7 +1,9 @@
 from pathlib import Path
+from unittest.mock import patch
 
 from bson import ObjectId
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from pymongo import MongoClient
 
 from app.core.auth import (
@@ -15,6 +17,7 @@ from app.core.auth import (
 from app.core.config import Settings
 from app.core.database import Document
 from app.main import create_app
+from app.services.password_reset_delivery import _deliver
 from tests.conftest import TEST_URI, make_settings, requires_db
 
 
@@ -45,6 +48,32 @@ def test_auth_settings_reject_unsafe_limits() -> None:
         assert "AUTH_MAX_FAILED_ATTEMPTS" in str(error)
     else:
         raise AssertionError("약한 로그인 제한 설정이 거부되어야 합니다.")
+    try:
+        Settings(
+            _env_file=None,
+            mongodb_uri="mongodb://example",
+            auth_cookie_samesite="none",
+            auth_cookie_secure=False,
+        )
+    except ValueError as error:
+        assert "AUTH_COOKIE_SAMESITE" in str(error)
+    else:
+        raise AssertionError("SameSite=None 쿠키는 Secure 없이 허용되면 안 됩니다.")
+
+
+def test_password_reset_delivery_uses_configured_frontend_url(tmp_path: Path) -> None:
+    settings = make_settings(
+        tmp_path,
+        resend_api_key=SecretStr("resend-test-key"),
+        password_reset_from="DataLens <no-reply@example.com>",
+        frontend_url="https://datalens.example",
+    )
+    with patch("app.services.password_reset_delivery.urlopen") as send:
+        send.return_value.__enter__.return_value.status = 200
+        _deliver(settings, "user@example.com", "secret-token")
+    request = send.call_args.args[0]
+    assert request.full_url == "https://api.resend.com/emails"
+    assert b"https://datalens.example/reset-password?token=secret-token" in request.data
 
 
 @requires_db
@@ -91,6 +120,14 @@ def test_signup_session_reset_and_file_isolation(tmp_path: Path) -> None:
             assert second.status_code == 201
             assert second.json()["data"]["user"]["role"] == "user"
             assert client.get("/api/v1/files").json()["data"]["total"] == 0
+            forbidden = client.post(
+                "/api/v1/complaints/categories/merge",
+                json={"sourceCategoryId": "CAT-0001", "targetCategoryId": "CAT-0002"},
+            )
+            assert (forbidden.status_code, forbidden.json()["error"]["code"]) == (
+                403,
+                "ADMIN_REQUIRED",
+            )
 
             reset = client.post(
                 "/api/v1/auth/password-reset/request",

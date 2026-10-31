@@ -24,6 +24,7 @@ from app.repositories.complaints import ComplaintRepository
 from app.repositories.files import FileRepository
 from app.repositories.jobs import JobRepository
 from app.repositories.reviews import ReviewRepository
+from app.repositories.taxonomy_changes import TaxonomyChangeRepository
 from app.schemas.complaint import (
     COMPLAINT_ANALYSIS_JOB_TYPE,
     AssignStatus,
@@ -32,6 +33,7 @@ from app.schemas.complaint import (
     CategoryDocument,
     ComplaintDocument,
     ReviewDocument,
+    TaxonomyChangeDocument,
 )
 from app.schemas.complaint_analysis import Category, ComplaintRecord
 from app.schemas.complaint_api import (
@@ -42,6 +44,15 @@ from app.schemas.complaint_api import (
 )
 from app.schemas.job import JobDocument
 from app.schemas.mongo import utc_now
+from app.schemas.taxonomy_api import (
+    CategoryChangeResult,
+    CategoryMergeRequest,
+    CategoryPeriodCount,
+    CategorySplitRequest,
+    ComplaintInsight,
+    ComplaintInsights,
+    ComplaintStats,
+)
 from app.services.artifacts import job_params_key
 from app.services.assignment import assign
 from app.services.complaint_vectors import load_vectors
@@ -80,6 +91,7 @@ class ComplaintService:
         categories: CategoryRepository,
         candidates: CandidateRepository,
         reviews: ReviewRepository,
+        changes: TaxonomyChangeRepository,
         storage: LocalStorage,
         settings: Settings,
     ) -> None:
@@ -101,6 +113,7 @@ class ComplaintService:
         self._categories = categories
         self._candidates = candidates
         self._reviews = reviews
+        self._changes = changes
         self._storage = storage
         self._settings = settings
 
@@ -201,6 +214,245 @@ class ComplaintService:
         if version is not None and not 1 <= version <= latest:
             raise AppError("TAXONOMY_NOT_FOUND", f"체계 버전 {version}이 없습니다.", 404)
         return target, await self._categories.list_version(target) if target else []
+
+    async def merge_categories(
+        self, request: CategoryMergeRequest, changed_by: str
+    ) -> CategoryChangeResult:
+        """현재 체계의 원본 카테고리를 대상 카테고리에 병합하고 새 버전을 만든다."""
+        if request.source_category_id == request.target_category_id:
+            raise AppError("SAME_CATEGORY", "서로 다른 카테고리를 선택해야 합니다.", 422)
+        latest = await self._categories.latest_version()
+        current = await self._categories.list_version(latest) if latest else []
+        by_id = {category.category_id: category for category in current}
+        source = by_id.get(request.source_category_id)
+        target = by_id.get(request.target_category_id)
+        if source is None or target is None:
+            raise AppError("CATEGORY_NOT_FOUND", "현재 체계에서 카테고리를 찾을 수 없습니다.", 404)
+        version = latest + 1
+        now = utc_now()
+        next_categories = [
+            category.model_copy(
+                update={
+                    "id": ObjectId(),
+                    "version": version,
+                    "status": "merged" if category.category_id == source.category_id else "active",
+                    "updated_at": now,
+                }
+            )
+            for category in current
+        ]
+        await self._categories.insert_many(next_categories)
+        members = await self._complaints.by_category(source.category_id)
+        affected = await self._complaints.reassign_category(
+            [member.id for member in members], target.category_id, target.group, version
+        )
+        await self._changes.insert(
+            TaxonomyChangeDocument(
+                change_type="merge",
+                from_category_id=source.category_id,
+                from_name=source.name,
+                to_category_ids=[target.category_id],
+                to_names=[target.name],
+                from_version=latest,
+                to_version=version,
+                reason=request.reason,
+                changed_by=changed_by,
+                affected_count=affected,
+            )
+        )
+        return CategoryChangeResult(
+            change_type="merge",
+            from_category_id=source.category_id,
+            to_category_ids=[target.category_id],
+            taxonomy_version=version,
+            affected_count=affected,
+        )
+
+    async def split_category(
+        self, request: CategorySplitRequest, changed_by: str
+    ) -> CategoryChangeResult:
+        """선택 민원과 나머지 민원으로 기존 카테고리를 실제 두 카테고리로 분할한다."""
+        latest = await self._categories.latest_version()
+        current = await self._categories.list_version(latest) if latest else []
+        source = next(
+            (item for item in current if item.category_id == request.source_category_id), None
+        )
+        if source is None:
+            raise AppError("CATEGORY_NOT_FOUND", "현재 체계에서 카테고리를 찾을 수 없습니다.", 404)
+        members = await self._complaints.by_category(source.category_id)
+        member_by_id = {str(member.id): member for member in members}
+        selected_ids = set(request.complaint_ids)
+        if not selected_ids.issubset(member_by_id):
+            raise AppError(
+                "COMPLAINT_NOT_IN_CATEGORY",
+                "선택 민원 중 원본 카테고리에 속하지 않은 항목이 있습니다.",
+                422,
+            )
+        selected = [member_by_id[item] for item in request.complaint_ids]
+        remainder = [member for member in members if str(member.id) not in selected_ids]
+        if not selected or not remainder:
+            raise AppError(
+                "SPLIT_REQUIRES_TWO_GROUPS",
+                "분할하려면 선택 집합과 남는 집합이 모두 필요합니다.",
+                422,
+            )
+        selected_vectors = await self._member_vectors(selected)
+        remainder_vectors = await self._member_vectors(remainder)
+        if len(selected_vectors) != len(selected) or len(remainder_vectors) != len(remainder):
+            raise AppError("VECTORS_MISSING", "분할에 필요한 민원 임베딩 산출물이 없습니다.", 409)
+
+        def centroid(vectors: dict[ObjectId, Vectors]) -> list[float]:
+            matrix = np.stack(list(vectors.values())).astype(np.float32)
+            return [float(value) for value in normalize(matrix.mean(axis=0, keepdims=True))[0]]
+
+        version = latest + 1
+        now = utc_now()
+        next_number = await self._categories.max_category_number() + 1
+        remainder_id = f"CAT-{next_number:04d}"
+        selected_id = f"CAT-{next_number + 1:04d}"
+        carried = [
+            category.model_copy(
+                update={
+                    "id": ObjectId(),
+                    "version": version,
+                    "status": "split" if category.category_id == source.category_id else "active",
+                    "updated_at": now,
+                }
+            )
+            for category in current
+        ]
+        carried.extend(
+            [
+                source.model_copy(
+                    update={
+                        "id": ObjectId(),
+                        "category_id": remainder_id,
+                        "version": version,
+                        "status": "active",
+                        "centroid": centroid(remainder_vectors),
+                        "exemplar_ids": [member.id for member in remainder[:5]],
+                        "created_in_version": version,
+                        "approved_by": changed_by,
+                        "approved_at": now,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ),
+                CategoryDocument(
+                    category_id=selected_id,
+                    version=version,
+                    name=request.name,
+                    group=request.group or source.group,
+                    definition=request.definition or source.definition,
+                    keywords=request.keywords or source.keywords,
+                    exemplar_ids=[member.id for member in selected[:5]],
+                    centroid=centroid(selected_vectors),
+                    embedding_model=source.embedding_model,
+                    created_in_version=version,
+                    approved_by=changed_by,
+                    approved_at=now,
+                ),
+            ]
+        )
+        await self._categories.insert_many(carried)
+        await self._complaints.reassign_category(
+            [member.id for member in remainder], remainder_id, source.group, version
+        )
+        selected_group = request.group or source.group
+        affected = await self._complaints.reassign_category(
+            [member.id for member in selected], selected_id, selected_group, version
+        )
+        await self._changes.insert(
+            TaxonomyChangeDocument(
+                change_type="split",
+                from_category_id=source.category_id,
+                from_name=source.name,
+                to_category_ids=[remainder_id, selected_id],
+                to_names=[source.name, request.name],
+                from_version=latest,
+                to_version=version,
+                reason=request.reason,
+                changed_by=changed_by,
+                affected_count=affected,
+            )
+        )
+        return CategoryChangeResult(
+            change_type="split",
+            from_category_id=source.category_id,
+            to_category_ids=[remainder_id, selected_id],
+            taxonomy_version=version,
+            affected_count=affected,
+        )
+
+    async def stats(self) -> ComplaintStats:
+        """최근 두 달의 카테고리별 민원 수를 비교한다."""
+        periods = await self._complaints.latest_periods(2)
+        current_period = periods[0] if periods else None
+        previous_period = periods[1] if len(periods) > 1 else None
+        current = await self._complaints.category_counts(current_period) if current_period else {}
+        previous = (
+            await self._complaints.category_counts(previous_period) if previous_period else {}
+        )
+        category_ids = sorted(set(current) | set(previous))
+        return ComplaintStats(
+            current_period=current_period,
+            previous_period=previous_period,
+            categories=[
+                CategoryPeriodCount(
+                    category_id=category_id,
+                    current_count=current.get(category_id, 0),
+                    previous_count=previous.get(category_id, 0),
+                )
+                for category_id in category_ids
+            ],
+        )
+
+    async def category_changes(self) -> list[TaxonomyChangeDocument]:
+        """최근 카테고리 병합·분할 이력을 돌려준다."""
+        return await self._changes.list_recent()
+
+    async def insights(self) -> ComplaintInsights:
+        """증가 카테고리·긴급·재신고 현황을 규칙 기반 인사이트로 만든다."""
+        stats = await self.stats()
+        latest = await self._categories.latest_version()
+        names = {
+            category.category_id: category.name
+            for category in (await self._categories.list_version(latest) if latest else [])
+        }
+        items: list[ComplaintInsight] = []
+        if stats.categories:
+            growth = max(
+                stats.categories, key=lambda item: item.current_count - item.previous_count
+            )
+            delta = growth.current_count - growth.previous_count
+            if delta > 0:
+                items.append(
+                    ComplaintInsight(
+                        type="growth",
+                        title=f"{names.get(growth.category_id, growth.category_id)} 증가",
+                        description=f"이전 기간보다 {delta}건 증가했습니다.",
+                        count=delta,
+                    )
+                )
+        urgent = await self._complaints.count_active({"attributes.urgency": "긴급"})
+        repeated = await self._complaints.count_active({"attributes.repeat": "재신고"})
+        items.extend(
+            [
+                ComplaintInsight(
+                    type="urgent",
+                    title="긴급 민원",
+                    description="현재 활성 긴급 민원입니다.",
+                    count=urgent,
+                ),
+                ComplaintInsight(
+                    type="repeat",
+                    title="재신고",
+                    description="반복 접수된 활성 민원입니다.",
+                    count=repeated,
+                ),
+            ]
+        )
+        return ComplaintInsights(items=items)
 
     async def candidates(
         self, decision: CandidateDecision | None, period: str | None
@@ -320,10 +572,11 @@ class ComplaintService:
         members = await self._complaints.by_candidate(candidate.id)
         latest = await self._categories.latest_version()
         now = utc_now()
+        decided_by = request.decided_by or "로컬 운영자"
 
         # 보류: 체계는 그대로 두고 결정만 기록한다. 소속 민원은 미배정으로 남는다
         if request.decision == "held":
-            await self._candidates.decide(candidate.id, "held", request.decided_by, now)
+            await self._candidates.decide(candidate.id, "held", decided_by, now)
             return CandidateDecisionResult(
                 candidate_id=candidate_id,
                 decision="held",
@@ -346,7 +599,7 @@ class ComplaintService:
                 raise AppError("CATEGORY_NOT_FOUND", "합칠 카테고리가 현재 체계에 없습니다.", 422)
             await self._assign_members(members, target, latest, "auto")
             await self._candidates.decide(
-                candidate.id, "merged", request.decided_by, now, merged_into=target.category_id
+                candidate.id, "merged", decided_by, now, merged_into=target.category_id
             )
             return CandidateDecisionResult(
                 candidate_id=candidate_id,
@@ -387,13 +640,13 @@ class ComplaintService:
             centroid=[float(x) for x in centroid],
             embedding_model=self._settings.embedding_model,
             created_in_version=latest + 1,
-            approved_by=request.decided_by,
+            approved_by=decided_by,
             approved_at=now,
         )
         # 결정 기록은 pending일 때만 바뀐다. 두 사람이 동시에 승인하면 한쪽만 성공해, 같은 후보로
         # 카테고리가 둘 생기지 않는다
         if not await self._candidates.decide(
-            candidate.id, "approved", request.decided_by, now, category_id=category.category_id
+            candidate.id, "approved", decided_by, now, category_id=category.category_id
         ):
             raise AppError("CANDIDATE_DECIDED", "이미 결정된 후보입니다.", 409)
         # 새 버전 체계를 만들고, 후보 소속 민원을 배정한 뒤, 남은 풀을 새 체계로 소급 배정한다
@@ -506,8 +759,9 @@ class ComplaintService:
                 }
             )
         now = utc_now()
+        reviewed_by = request.reviewed_by or "로컬 운영자"
         # 검토 완료를 먼저 기록하고(pending일 때만 성공), 성공한 쪽만 민원을 고쳐 동시 저장을 막는다
-        if not await self._reviews.complete(oid, request.category_id, request.reviewed_by, now):
+        if not await self._reviews.complete(oid, request.category_id, reviewed_by, now):
             raise AppError("REVIEW_DONE", "이미 끝난 검토입니다.", 409)
         await self._complaints.update_fields([(review.complaint_id, fields)])
         # 저장된 완료 시각·검토자를 담아 돌려주려고 다시 읽는다

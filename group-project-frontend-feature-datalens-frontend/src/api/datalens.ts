@@ -1,7 +1,7 @@
 import { apiDownload, apiRequest, apiRoutes } from "./client";
 import { AppError } from "./AppError";
 import { uploadPresigned as uploadToBlob } from "@vercel/blob/client";
-import type { FileCategory, FileStatus } from "../types";
+import type { DataReport, FileCategory, FileStatus, MappingField } from "../types";
 
 type ApiResponse<T> = {
   success: boolean;
@@ -108,6 +108,36 @@ export type ApiVersion = {
     before?: { rowCount?: number; score?: number; issueCount?: number };
     after?: { rowCount?: number; score?: number; issueCount?: number };
   } | null;
+  ai: Record<string, unknown> | null;
+};
+
+export type ApiFieldMapping = {
+  sourceId?: string | null;
+  title?: string | null;
+  content?: string | null;
+  receivedAt?: string | null;
+  region?: string | null;
+  address?: string | null;
+  latitude?: string | null;
+  longitude?: string | null;
+  agency?: string | null;
+  sourceCategory?: string | null;
+  result?: string | null;
+};
+
+export type ApiMappingSuggestion = {
+  fileId: string;
+  method: "ai" | "rule";
+  columns: string[];
+  mapping: ApiFieldMapping;
+  constants: { region: string | null; agency: string | null; sourceCategory: string | null };
+  notes: string[];
+};
+
+export type ComplaintAnalysisOptions = {
+  mapping?: Partial<Record<string, MappingField>>;
+  splitRule?: string | null;
+  attributeMethod?: "auto" | "rule" | "llm";
 };
 
 export type ApiDashboardSummary = {
@@ -178,6 +208,10 @@ export type ApiCandidate = {
   suggestedDefinition: string | null;
   suggestedGroup: string | null;
   decision: "pending" | "approved" | "held" | "merged";
+  categoryId: string | null;
+  mergedIntoCategoryId: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
 };
 
 export type ApiReview = {
@@ -186,8 +220,96 @@ export type ApiReview = {
   status: "pending" | "done";
   suggestedCategoryId: string | null;
   reviewedCategoryId: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
   complaint: ApiComplaint | null;
 };
+
+export type ApiComplaintStats = {
+  currentPeriod: string | null;
+  previousPeriod: string | null;
+  categories: Array<{ categoryId: string; currentCount: number; previousCount: number }>;
+};
+
+export type ApiComplaintInsight = {
+  type: "growth" | "urgent" | "repeat";
+  title: string;
+  description: string;
+  count: number;
+};
+
+export type ApiCategoryChange = {
+  changeId: string;
+  changeType: "merge" | "split";
+  fromCategoryId: string;
+  fromName: string;
+  toCategoryIds: string[];
+  toNames: string[];
+  fromVersion: number;
+  toVersion: number;
+  reason: string | null;
+  changedBy: string;
+  affectedCount: number;
+  createdAt: string;
+};
+
+const FIELD_TO_API: Record<Exclude<MappingField, "ignore">, keyof ApiFieldMapping> = {
+  sourceId: "sourceId",
+  title: "title",
+  content: "content",
+  receivedAt: "receivedAt",
+  region: "region",
+  address: "address",
+  latitude: "latitude",
+  longitude: "longitude",
+  agency: "agency",
+  sourceCategory: "sourceCategory",
+  result: "result",
+};
+
+function toApiMapping(mapping: Partial<Record<string, MappingField>> = {}): ApiFieldMapping {
+  const result: ApiFieldMapping = {};
+  for (const [column, field] of Object.entries(mapping)) {
+    if (!field || field === "ignore") continue;
+    result[FIELD_TO_API[field]] = column;
+  }
+  return result;
+}
+
+export function fromApiMapping(mapping: ApiFieldMapping): Partial<Record<string, MappingField>> {
+  const result: Partial<Record<string, MappingField>> = {};
+  for (const [field, column] of Object.entries(mapping)) {
+    if (!column) continue;
+    const mapped = Object.entries(FIELD_TO_API).find(([, apiField]) => apiField === field)?.[0];
+    if (mapped) result[column] = mapped as MappingField;
+  }
+  return result;
+}
+
+function reportFromVersion(version: ApiVersion | undefined): DataReport | null {
+  const value = version?.ai?.report;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const report = value as Record<string, unknown>;
+  if (typeof report.summary !== "string") return null;
+  return {
+    summary: report.summary,
+    keyFindings: Array.isArray(report.keyFindings)
+      ? report.keyFindings.filter((item): item is string => typeof item === "string")
+      : [],
+    qualityIssues: Array.isArray(report.qualityIssues)
+      ? report.qualityIssues as DataReport["qualityIssues"]
+      : [],
+    cleaningRecommendations: Array.isArray(report.cleaningRecommendations)
+      ? report.cleaningRecommendations as DataReport["cleaningRecommendations"]
+      : [],
+    analysisSuggestions: Array.isArray(report.analysisSuggestions)
+      ? report.analysisSuggestions.filter((item): item is string => typeof item === "string")
+      : [],
+    caveats: Array.isArray(report.caveats)
+      ? report.caveats.filter((item): item is string => typeof item === "string")
+      : [],
+  };
+}
 
 export type AuthUser = {
   id: string;
@@ -323,6 +445,26 @@ export const datalensApi = {
   async analysis(fileId: string): Promise<ApiAnalysis> {
     return unwrap(await apiRequest<ApiResponse<ApiAnalysis>>(apiRoutes.analysis(fileId)));
   },
+  async startComplaintAnalysis(
+    fileId: string,
+    options: ComplaintAnalysisOptions = {},
+  ): Promise<{ jobId: string }> {
+    return unwrap(await apiRequest<ApiResponse<{ jobId: string }>>(apiRoutes.analysis(fileId), {
+      method: "POST",
+      data: {
+        type: "complaint",
+        mapping: toApiMapping(options.mapping),
+        splitRule: options.splitRule || undefined,
+        attributeMethod: options.attributeMethod ?? "auto",
+      },
+    }));
+  },
+  async mappingSuggestion(fileId: string): Promise<ApiMappingSuggestion> {
+    return unwrap(await apiRequest<ApiResponse<ApiMappingSuggestion>>(
+      apiRoutes.mappingSuggestion(fileId),
+      { method: "POST" },
+    ));
+  },
   async suggestions(fileId: string): Promise<ApiSuggestion[]> {
     const response = await apiRequest<ApiResponse<{ suggestions: ApiSuggestion[] }>>(
       apiRoutes.cleaningSuggestions(fileId),
@@ -343,6 +485,17 @@ export const datalensApi = {
       apiRoutes.versions(fileId),
     );
     return unwrap(response).items;
+  },
+  async latestReport(fileId: string): Promise<DataReport | null> {
+    const response = await apiRequest<ApiResponse<{ items: ApiVersion[] }>>(
+      `${apiRoutes.versions(fileId)}?type=report`,
+    );
+    return reportFromVersion(unwrap(response).items[0]);
+  },
+  async createReport(fileId: string): Promise<{ jobId: string }> {
+    return unwrap(await apiRequest<ApiResponse<{ jobId: string }>>(apiRoutes.report(fileId), {
+      method: "POST",
+    }));
   },
   export(fileId: string, format: "csv" | "json"): Promise<Blob> {
     return apiDownload(apiRoutes.export(fileId, format));
@@ -375,6 +528,40 @@ export const datalensApi = {
       await apiRequest<ApiResponse<{ version: number; items: ApiCategory[] }>>(apiRoutes.taxonomy),
     );
   },
+  async complaintStats(): Promise<ApiComplaintStats> {
+    return unwrap(await apiRequest<ApiResponse<ApiComplaintStats>>(apiRoutes.complaintStats));
+  },
+  async complaintInsights(): Promise<ApiComplaintInsight[]> {
+    const response = await apiRequest<ApiResponse<{ items: ApiComplaintInsight[] }>>(
+      apiRoutes.complaintInsights,
+    );
+    return unwrap(response).items;
+  },
+  async categoryChanges(): Promise<ApiCategoryChange[]> {
+    const response = await apiRequest<ApiResponse<{ items: ApiCategoryChange[] }>>(
+      apiRoutes.categoryChanges,
+    );
+    return unwrap(response).items;
+  },
+  async mergeCategories(sourceCategoryId: string, targetCategoryId: string, reason: string): Promise<void> {
+    await apiRequest(apiRoutes.categoryMerge, {
+      method: "POST",
+      data: { sourceCategoryId, targetCategoryId, reason: reason || null },
+    });
+  },
+  async splitCategory(input: {
+    sourceCategoryId: string;
+    name: string;
+    group?: string;
+    definition?: string;
+    complaintIds: string[];
+    reason: string;
+  }): Promise<void> {
+    await apiRequest(apiRoutes.categorySplit, {
+      method: "POST",
+      data: { ...input, reason: input.reason || null },
+    });
+  },
   async candidates(): Promise<ApiCandidate[]> {
     const decisions = ["pending", "approved", "held", "merged"] as const;
     const groups = await Promise.all(decisions.map(async (decision) => {
@@ -394,7 +581,6 @@ export const datalensApi = {
       method: "POST",
       data: {
         decision,
-        decidedBy: "DataLens 운영자",
         mergedIntoCategoryId: mergedIntoCategoryId || undefined,
       },
     });
@@ -420,7 +606,7 @@ export const datalensApi = {
   async confirmReview(reviewId: string, categoryId: string): Promise<void> {
     await apiRequest(apiRoutes.review(reviewId), {
       method: "POST",
-      data: { categoryId: categoryId || null, reviewedBy: "DataLens 운영자" },
+      data: { categoryId: categoryId || null },
     });
   },
 };

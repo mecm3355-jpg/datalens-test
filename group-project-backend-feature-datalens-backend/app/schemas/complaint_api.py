@@ -245,13 +245,13 @@ class CandidateList(ApiModel):
 class CandidateDecisionRequest(ApiModel):
     """POST /complaints/categories/candidates/{id}/decision 요청.
 
-    승인 권한(PRD 12장)은 미정이라 결정자는 요청 값으로만 받는다.
+    결정자는 인증 세션에서 서버가 채우며, 인증이 꺼진 로컬 모드만 요청 값을 사용한다.
     """
 
     # pending으로 되돌리는 결정은 받지 않는다(결정은 한 번만 기록)
     decision: Literal["approved", "held", "merged"]
     # 누가 결정했는지 이력에 남기기 위해 필수
-    decided_by: str = Field(min_length=1, max_length=100)
+    decided_by: str | None = Field(default=None, min_length=1, max_length=100)
     # 승인: 이름·상위 그룹(필수)·정의. 비우면 제안값을 쓴다
     name: str | None = Field(default=None, max_length=100)
     group: str | None = Field(default=None, max_length=50)
@@ -317,4 +317,4 @@ class ReviewDecisionRequest(ApiModel):
 
     # CAT-0012 형식 ID라 길이를 짧게 제한한다
     category_id: str | None = Field(default=None, max_length=20)
-    reviewed_by: str = Field(min_length=1, max_length=100)
+    reviewed_by: str | None = Field(default=None, min_length=1, max_length=100)

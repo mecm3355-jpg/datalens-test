@@ -23,7 +23,7 @@ export function ForgotPasswordPage() {
         navigate(`/reset-password?token=${encodeURIComponent(token)}`);
         return;
       }
-      setMessage("요청이 접수되었습니다. 이메일 발송이 구성된 배포에서는 안내 메일을 확인해 주세요.");
+      setMessage("가입된 이메일이면 비밀번호 재설정 안내를 전송했습니다. 받은편지함을 확인해 주세요.");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "요청을 처리하지 못했습니다.");
     } finally {

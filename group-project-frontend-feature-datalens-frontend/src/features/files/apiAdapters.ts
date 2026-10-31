@@ -194,6 +194,27 @@ export function toArtifact(
   const rules = toCleaningRules(suggestions);
   const metrics = analysis.quality.metrics ?? {};
   const derived = statistics(analysis);
+  const image = analysis.analysis.image;
+  const imageMetadata = image && typeof image === "object" && !Array.isArray(image)
+    ? {
+        width: typeof (image as Record<string, unknown>).width === "number"
+          ? (image as Record<string, number>).width
+          : null,
+        height: typeof (image as Record<string, unknown>).height === "number"
+          ? (image as Record<string, number>).height
+          : null,
+      }
+    : null;
+  const lineCount = typeof analysis.analysis.lineCount === "number"
+    ? analysis.analysis.lineCount
+    : preview.lines?.length;
+  const characterCount = typeof analysis.analysis.characterCount === "number"
+    ? analysis.analysis.characterCount
+    : preview.lines?.join("\n").length;
+  const words = (preview.lines ?? []).join(" ").trim().split(/\s+/).filter(Boolean).length;
+  const textStats = imageMetadata === null && lineCount !== undefined && characterCount !== undefined
+    ? { lines: lineCount, words, characters: characterCount }
+    : null;
   return {
     // API 미리보기의 text 줄도 서버가 실제로 추출한 내용이다. metadata로 표시하면
     // PDF가 정제 불가인 것처럼 잘못 안내되므로 모든 서버 미리보기를 parsed로 본다.
@@ -224,8 +245,9 @@ export function toArtifact(
           },
       numericSummaries: derived.numeric,
       frequencies: derived.frequencies,
-      textStats: null,
-      imageMetadata: null,
+      textStats,
+      imageMetadata,
+      thumbnail: preview.thumbnail,
     },
   };
 }

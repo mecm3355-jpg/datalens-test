@@ -238,3 +238,68 @@ def test_analysis_request_is_validated(db_client: TestClient) -> None:
         json={"decision": "held", "decidedBy": "x"},
     )
     assert missing.status_code == 404
+
+
+def test_category_merge_split_stats_and_change_history(db_client: TestClient) -> None:
+    """병합·분할이 새 체계 버전과 민원 배정·감사 이력을 함께 갱신한다."""
+    file_id = upload(db_client, "taxonomy.csv", csv_bytes(first_month()))
+    analyze(db_client, file_id)
+
+    created_ids: list[str] = []
+    for topic, name, group in (
+        ("가로등", "가로등 고장", "안전·조명"),
+        ("쓰레기", "쓰레기 방치", "환경"),
+    ):
+        candidate = candidate_for(db_client, topic)
+        response = db_client.post(
+            f"/api/v1/complaints/categories/candidates/{candidate['candidateId']}/decision",
+            json={"decision": "approved", "name": name, "group": group},
+        )
+        assert response.status_code == 200, response.text
+        created_ids.append(response.json()["data"]["categoryId"])
+
+    source_id, target_id = created_ids[1], created_ids[0]
+    merged = db_client.post(
+        "/api/v1/complaints/categories/merge",
+        json={
+            "sourceCategoryId": source_id,
+            "targetCategoryId": target_id,
+            "reason": "운영 기준 통합",
+        },
+    )
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["data"]["affectedCount"] == 8
+
+    members = db_client.get(
+        "/api/v1/complaints", params={"categoryId": target_id, "limit": 200}
+    ).json()["data"]["items"]
+    assert len(members) == 16
+    selected = [item["complaintId"] for item in members[:3]]
+    split = db_client.post(
+        "/api/v1/complaints/categories/split",
+        json={
+            "sourceCategoryId": target_id,
+            "name": "가로등 긴급 보수",
+            "group": "안전·조명",
+            "complaintIds": selected,
+            "reason": "긴급 보수 유형 분리",
+        },
+    )
+    assert split.status_code == 200, split.text
+    split_data = split.json()["data"]
+    assert split_data["affectedCount"] == 3
+    assert len(split_data["toCategoryIds"]) == 2
+
+    taxonomy = db_client.get("/api/v1/complaints/categories").json()["data"]
+    active_ids = {item["categoryId"] for item in taxonomy["items"]}
+    assert target_id not in active_ids
+    assert set(split_data["toCategoryIds"]).issubset(active_ids)
+
+    changes = db_client.get("/api/v1/complaints/categories/changes").json()["data"]["items"]
+    assert [item["changeType"] for item in changes[:2]] == ["split", "merge"]
+    stats = db_client.get("/api/v1/complaints/stats")
+    assert stats.status_code == 200
+    assert stats.json()["data"]["currentPeriod"] == "2026-01"
+    insights = db_client.get("/api/v1/complaints/insights")
+    assert insights.status_code == 200
+    assert {item["type"] for item in insights.json()["data"]["items"]} >= {"urgent", "repeat"}

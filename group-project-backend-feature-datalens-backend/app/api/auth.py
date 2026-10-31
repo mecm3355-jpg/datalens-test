@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.schemas.common import ApiModel, ApiResponse, ok
 from app.schemas.user import UserDocument
 from app.services.auth_service import AuthService
+from app.services.password_reset_delivery import send_password_reset
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 Config = Annotated[Settings, Depends(get_app_settings)]
@@ -94,7 +95,7 @@ def _set_session_cookie(response: Response, token: str, settings: Settings) -> N
         max_age=settings.auth_session_seconds,
         httponly=True,
         secure=settings.auth_cookie_secure,
-        samesite="lax",
+        samesite=settings.auth_cookie_samesite,
         path="/",
     )
 
@@ -153,7 +154,7 @@ async def logout(
         path="/",
         httponly=True,
         secure=settings.auth_cookie_secure,
-        samesite="lax",
+        samesite=settings.auth_cookie_samesite,
     )
     return ok(SessionResult(authenticated=False))
 
@@ -163,13 +164,15 @@ async def request_password_reset(
     payload: PasswordResetRequest, service: Service, settings: Config
 ) -> ApiResponse[PasswordResetResult]:
     """계정 노출 없이 비밀번호 재설정 요청을 접수한다."""
-    if not settings.auth_expose_reset_token:
+    if not settings.auth_expose_reset_token and not settings.password_reset_delivery_configured():
         raise AppError(
             "PASSWORD_RESET_DELIVERY_NOT_CONFIGURED",
             "비밀번호 재설정 메일 발송이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요.",
             503,
         )
     token = await service.request_password_reset(payload.email)
+    if token is not None and not settings.auth_expose_reset_token:
+        await send_password_reset(settings, payload.email, token)
     exposed = token if settings.auth_expose_reset_token else None
     return ok(
         PasswordResetResult(

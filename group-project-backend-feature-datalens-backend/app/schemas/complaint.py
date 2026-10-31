@@ -28,6 +28,7 @@ ReviewReason = Literal["ambiguous", "urgent", "attributeUncertain", "ocrUncertai
 # 본문이 없고 제목만 있는 원본도 분석하도록 어느 쪽을 썼는지 남긴다
 ContentType = Literal["body", "title"]
 IssueStatus = Literal["open", "resolved"]
+TaxonomyChangeType = Literal["merge", "split"]
 
 
 class CategoryDocument(MongoDocument):
@@ -51,6 +52,22 @@ class CategoryDocument(MongoDocument):
     approved_at: datetime
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class TaxonomyChangeDocument(MongoDocument):
+    """taxonomy_changes — 카테고리 병합·분할 감사 이력."""
+
+    change_type: TaxonomyChangeType
+    from_category_id: str
+    from_name: str
+    to_category_ids: list[str]
+    to_names: list[str]
+    from_version: int
+    to_version: int
+    reason: str | None = None
+    changed_by: str
+    affected_count: int
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class CandidateDocument(MongoDocument):

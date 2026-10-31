@@ -1,14 +1,10 @@
-"""[명세서 외 추가 제안, PRD 7.5] 민원 목록·카테고리 체계·후보 승인·검토 API.
-
-명세서에 반영되기 전까지 제안 상태다(사용자 승인, 2026-10-26). 병합·분할(M5)과 통계·인사이트(M4)는
-아직 없다.
-"""
+"""민원 목록·카테고리 체계·후보 승인·검토·통계 API."""
 
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_complaint_service
+from app.api.deps import AdminUser, get_complaint_service
 from app.schemas.common import ApiResponse, ok
 from app.schemas.complaint import AssignStatus, CandidateDecision
 from app.schemas.complaint_api import (
@@ -23,6 +19,15 @@ from app.schemas.complaint_api import (
     ReviewItem,
     ReviewList,
     Taxonomy,
+)
+from app.schemas.taxonomy_api import (
+    CategoryChangeItem,
+    CategoryChangeList,
+    CategoryChangeResult,
+    CategoryMergeRequest,
+    CategorySplitRequest,
+    ComplaintInsights,
+    ComplaintStats,
 )
 from app.services.complaint_service import ComplaintService
 
@@ -85,6 +90,45 @@ async def get_taxonomy(
     return ok(Taxonomy(version=resolved, items=[CategoryItem.from_document(c) for c in categories]))
 
 
+@router.post("/categories/merge", response_model=ApiResponse[CategoryChangeResult])
+async def merge_categories(
+    service: Service, request: CategoryMergeRequest, admin: AdminUser
+) -> ApiResponse[CategoryChangeResult]:
+    """두 카테고리를 병합해 새 체계 버전을 만든다."""
+    changed_by = admin.display_name if admin is not None else "로컬 운영자"
+    return ok(await service.merge_categories(request, changed_by))
+
+
+@router.post("/categories/split", response_model=ApiResponse[CategoryChangeResult])
+async def split_category(
+    service: Service, request: CategorySplitRequest, admin: AdminUser
+) -> ApiResponse[CategoryChangeResult]:
+    """선택한 민원을 기준으로 카테고리를 두 개로 분할한다."""
+    changed_by = admin.display_name if admin is not None else "로컬 운영자"
+    return ok(await service.split_category(request, changed_by))
+
+
+@router.get("/categories/changes", response_model=ApiResponse[CategoryChangeList])
+async def list_category_changes(service: Service) -> ApiResponse[CategoryChangeList]:
+    """최근 카테고리 병합·분할 감사 이력을 조회한다."""
+    changes = await service.category_changes()
+    return ok(
+        CategoryChangeList(items=[CategoryChangeItem.from_document(item) for item in changes])
+    )
+
+
+@router.get("/stats", response_model=ApiResponse[ComplaintStats])
+async def get_complaint_stats(service: Service) -> ApiResponse[ComplaintStats]:
+    """최근 두 기간의 카테고리별 민원 수를 조회한다."""
+    return ok(await service.stats())
+
+
+@router.get("/insights", response_model=ApiResponse[ComplaintInsights])
+async def get_complaint_insights(service: Service) -> ApiResponse[ComplaintInsights]:
+    """증가·긴급·재신고 규칙 기반 인사이트를 조회한다."""
+    return ok(await service.insights())
+
+
 @router.get("/categories/candidates", response_model=ApiResponse[CandidateList])
 async def list_candidates(
     service: Service,
@@ -109,7 +153,7 @@ async def list_candidates(
     response_model=ApiResponse[CandidateDecisionResult],
 )
 async def decide_candidate(
-    service: Service, candidate_id: str, request: CandidateDecisionRequest
+    service: Service, candidate_id: str, request: CandidateDecisionRequest, admin: AdminUser
 ) -> ApiResponse[CandidateDecisionResult]:
     """후보를 승인·보류·기존 카테고리에 합친다. 승인하면 체계 버전이 올라간다.
 
@@ -118,8 +162,10 @@ async def decide_candidate(
         candidate_id: 후보 ID
         request: 결정 내용
     """
-    # 승인 권한·인증은 아직 미정(PRD 12장)이라 별도 권한 확인 없이 결정을 받는다
-    return ok(await service.decide(candidate_id, request))
+    decided_by = admin.display_name if admin is not None else request.decided_by or "로컬 운영자"
+    return ok(
+        await service.decide(candidate_id, request.model_copy(update={"decided_by": decided_by}))
+    )
 
 
 @router.get("/reviews", response_model=ApiResponse[ReviewList])
@@ -153,7 +199,7 @@ async def list_reviews(
 
 @router.post("/reviews/{review_id}", response_model=ApiResponse[ReviewItem])
 async def save_review(
-    service: Service, review_id: str, request: ReviewDecisionRequest
+    service: Service, review_id: str, request: ReviewDecisionRequest, admin: AdminUser
 ) -> ApiResponse[ReviewItem]:
     """검토 결과를 저장한다(카테고리 확정 또는 현재 배정 확인).
 
@@ -163,4 +209,6 @@ async def save_review(
         request: 확정 카테고리와 검토자
     """
     # 저장 응답은 검토 결과만 돌려주고 대상 민원은 다시 읽지 않는다(목록 API에서 본다)
-    return ok(ReviewItem.from_document(await service.review(review_id, request), None))
+    reviewed_by = admin.display_name if admin is not None else request.reviewed_by or "로컬 운영자"
+    resolved = request.model_copy(update={"reviewed_by": reviewed_by})
+    return ok(ReviewItem.from_document(await service.review(review_id, resolved), None))

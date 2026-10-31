@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
+import { datalensApi, fromApiMapping } from "../api/datalens";
 import {
   jobByFileId,
   qualityByFile,
@@ -43,6 +44,10 @@ function FileDetail({ fileId }: { fileId: string }) {
   const [retryError, setRetryError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResolvingFile, setIsResolvingFile] = useState(dataMode === "api");
+  const [mapping, setMapping] = useState<Partial<Record<string, MappingField>>>({});
+  const [mappingNotes, setMappingNotes] = useState<string[]>([]);
+  const [mappingSaved, setMappingSaved] = useState(false);
+  const initializedMappingFile = useRef("");
   const file = files.find((item) => item.id === fileId);
   useEffect(() => {
     if (dataMode !== "api") {
@@ -61,6 +66,34 @@ function FileDetail({ fileId }: { fileId: string }) {
     // fileId is the loading boundary; provider state updates must not retrigger the request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataMode, fileId]);
+  useEffect(() => {
+    if (!file || file.fileCategory !== "tabular") return;
+    if (initializedMappingFile.current === file.id) return;
+    initializedMappingFile.current = file.id;
+    const storageKey = `datalens:file-mapping:${file.id}`;
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved) {
+        setMapping(JSON.parse(saved) as Partial<Record<string, MappingField>>);
+        setMappingSaved(true);
+        return;
+      }
+    } catch {
+      // 저장소가 차단된 브라우저에서도 서버 제안으로 계속 진행합니다.
+    }
+    if (dataMode === "api" && file.status === "completed") {
+      void datalensApi.mappingSuggestion(file.id)
+        .then((suggestion) => {
+          setMapping(fromApiMapping(suggestion.mapping));
+          setMappingNotes(suggestion.notes);
+        })
+        .catch(() => {
+          setMapping(file.mapping);
+        });
+    } else {
+      setMapping(file.mapping);
+    }
+  }, [dataMode, file]);
   if (!file && (loading || isResolvingFile)) {
     return (
       <div className="page">
@@ -86,7 +119,11 @@ function FileDetail({ fileId }: { fileId: string }) {
     id: `uploaded-${index}`,
     values,
   }));
-  const analysis = cleaningArtifact(file.id)?.analysis;
+  const artifact = cleaningArtifact(file.id);
+  const analysis = artifact?.analysis;
+  const previewColumns = file.columns.length > 0
+    ? file.columns
+    : Object.keys(uploadedPreview[0]?.values ?? {});
   const analysisUnsupported = file.analysisSupported === false || file.fileCategory === "other";
   const quality = cleaningArtifact(file.id)?.qualityIssues ?? qualityByFile[file.id] ?? [];
   const processingError = file.processingError
@@ -94,12 +131,35 @@ function FileDetail({ fileId }: { fileId: string }) {
     : job?.error;
 
   const retryProcessing = async () => {
-    const started = await retryFileProcessing(file.id);
-    if (started) {
+    try {
+      await retryFileProcessing(file.id);
       setRetryError(null);
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "파일 처리를 다시 시작하지 못했습니다.");
+    }
+  };
+
+  const startComplaintAnalysis = async () => {
+    if (file.fileCategory === "tabular" && !Object.values(mapping).some((field) => field === "content" || field === "title")) {
+      setRetryError("표 파일은 민원 내용 또는 민원 제목 열을 먼저 매핑해야 합니다.");
       return;
     }
-    setRetryError("원본 파일이 현재 브라우저 세션에 없습니다. 파일 목록에서 원본을 다시 선택해 주세요.");
+    try {
+      setRetryError(null);
+      await requestAnalysis(file.id, { mapping, attributeMethod: "auto" });
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "민원 분석을 시작하지 못했습니다.");
+    }
+  };
+
+  const saveMapping = () => {
+    try {
+      window.localStorage.setItem(`datalens:file-mapping:${file.id}`, JSON.stringify(mapping));
+      setMappingSaved(true);
+      setRetryError(null);
+    } catch {
+      setRetryError("브라우저에 컬럼 매핑을 저장하지 못했습니다.");
+    }
   };
 
   const removeFile = async () => {
@@ -130,14 +190,12 @@ function FileDetail({ fileId }: { fileId: string }) {
                 if (file.status === "failed") {
                   void retryProcessing();
                 } else {
-                  void requestAnalysis(file.id).catch((error: unknown) => {
-                    setRetryError(error instanceof Error ? error.message : "분석을 시작하지 못했습니다.");
-                  });
+                  void startComplaintAnalysis();
                 }
               }}
               disabled={file.status === "processing"}
             >
-              {file.status === "processing" ? "처리 중" : job?.status === "completed" ? "다시 분석" : file.status === "failed" ? "다시 시도" : "분석 실행"}
+              {file.status === "processing" ? "처리 중" : file.status === "failed" ? "처리 다시 시도" : preview.length > 0 ? "민원 다시 분석" : "민원 분석 실행"}
             </Button> : null}
             <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting}>
               {isDeleting ? "삭제 중" : "파일 삭제"}
@@ -268,20 +326,36 @@ function FileDetail({ fileId }: { fileId: string }) {
         </section>
       ) : null}
 
-      {file.columns.length > 0 ? <MappingCard file={file} /> : null}
+      {file.fileCategory === "tabular" && previewColumns.length > 0 ? (
+        <MappingCard
+          file={file}
+          columns={previewColumns}
+          mapping={mapping}
+          notes={mappingNotes}
+          saved={mappingSaved}
+          onChange={(next) => {
+            setMapping(next);
+            setMappingSaved(false);
+          }}
+          onSave={saveMapping}
+        />
+      ) : null}
 
       {!analysisUnsupported ? <article className="card">
         <div className="card-head">
           <h2 className="title-sm">추출 미리보기</h2>
           <span className="caption">앞 {formatNumber(uploadedPreview.length || preview.length)}건</span>
         </div>
-        {uploadedPreview.length > 0 ? (
+        {analysis?.thumbnail ? (
+          <img className="file-preview-image" src={analysis.thumbnail} alt={`${file.originalName} 미리보기`} />
+        ) : null}
+        {uploadedPreview.length > 0 && previewColumns.length > 0 ? (
           <DataTable<UploadedPreviewRow>
             framed={false}
             rows={uploadedPreview}
             rowKey={(row) => row.id}
             empty="읽을 수 있는 데이터가 없습니다."
-            columns={file.columns.slice(0, 6).map((column) => ({
+            columns={previewColumns.slice(0, 6).map((column) => ({
               key: column,
               header: column,
               render: (row) => <span className="content-cell">{row.values[column] || "—"}</span>,
@@ -356,8 +430,23 @@ function StageTrack({ status, stage }: { status: JobStatus; stage: string }) {
   );
 }
 
-function MappingCard({ file }: { file: DataFile }) {
-  const [mapping, setMapping] = useState(file.mapping);
+function MappingCard({
+  file,
+  columns,
+  mapping,
+  notes,
+  saved,
+  onChange,
+  onSave,
+}: {
+  file: DataFile;
+  columns: string[];
+  mapping: Partial<Record<string, MappingField>>;
+  notes: string[];
+  saved: boolean;
+  onChange: (mapping: Partial<Record<string, MappingField>>) => void;
+  onSave: () => void;
+}) {
   const [corrected, setCorrected] = useState(false);
 
   return (
@@ -368,7 +457,7 @@ function MappingCard({ file }: { file: DataFile }) {
           <Button
             variant="secondary"
             onClick={() => {
-              setMapping((current) => ({ ...current, 경도: "latitude", 위도: "longitude" }));
+              onChange({ ...mapping, 경도: "latitude", 위도: "longitude" });
               setCorrected(true);
             }}
           >
@@ -386,7 +475,7 @@ function MappingCard({ file }: { file: DataFile }) {
         <p className="caption">공통 필드에 맞춘 뒤 분석을 실행합니다.</p>
       )}
       <div className="mapping-grid notice">
-        {file.columns.map((column) => (
+        {columns.map((column) => (
           <label className="field" key={column}>
             <span>{column}</span>
             <select
@@ -394,7 +483,7 @@ function MappingCard({ file }: { file: DataFile }) {
               value={mapping[column] ?? "ignore"}
               onChange={(event) => {
                 const value = event.target.value as MappingField;
-                setMapping((current) => ({ ...current, [column]: value }));
+                onChange({ ...mapping, [column]: value });
               }}
             >
               {MAPPING_FIELDS.map((field) => (
@@ -405,6 +494,11 @@ function MappingCard({ file }: { file: DataFile }) {
             </select>
           </label>
         ))}
+      </div>
+      {notes.length > 0 ? <p className="caption notice">제안 근거: {notes.join(" · ")}</p> : null}
+      <div className="action-row notice">
+        <Button variant="secondary" onClick={onSave}>매핑 저장</Button>
+        {saved ? <span className="pill">저장됨</span> : <span className="caption">변경 내용은 민원 분석 요청에 즉시 반영됩니다.</span>}
       </div>
     </article>
   );

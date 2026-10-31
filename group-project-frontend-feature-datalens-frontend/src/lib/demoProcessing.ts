@@ -272,6 +272,7 @@ function inspectRows(
       frequencies: valueFrequencies(rows),
       textStats,
       imageMetadata: null,
+      thumbnail: null,
     },
   };
 }
@@ -290,7 +291,7 @@ export async function inspectDemoFile(file: File): Promise<DemoCleaningArtifact>
       rows: [{ 파일명: file.name, 형식: extension.toUpperCase(), MIME: file.type || "알 수 없음", 크기: String(file.size), 해상도: size.width && size.height ? `${size.width} × ${size.height}` : "확인 불가" }],
       rules: [],
       preview: [],
-      analysis: { detectedFormat: extension.toUpperCase(), supported: true, quality: null, numericSummaries: [], frequencies: [], textStats: null, imageMetadata: size },
+      analysis: { detectedFormat: extension.toUpperCase(), supported: true, quality: null, numericSummaries: [], frequencies: [], textStats: null, imageMetadata: size, thumbnail: null },
     };
   }
 
@@ -332,7 +333,7 @@ export async function inspectDemoFile(file: File): Promise<DemoCleaningArtifact>
     rows: [{ 파일명: file.name, 형식: extension.toUpperCase() || "알 수 없음", MIME: file.type || "알 수 없음", 크기: String(file.size), 분석지원: "메타데이터만 지원" }],
     rules: [],
     preview: [],
-    analysis: { detectedFormat: extension.toUpperCase() || "UNKNOWN", supported: false, quality: null, numericSummaries: [], frequencies: [], textStats: null, imageMetadata: null },
+    analysis: { detectedFormat: extension.toUpperCase() || "UNKNOWN", supported: false, quality: null, numericSummaries: [], frequencies: [], textStats: null, imageMetadata: null, thumbnail: null },
   };
 }
 

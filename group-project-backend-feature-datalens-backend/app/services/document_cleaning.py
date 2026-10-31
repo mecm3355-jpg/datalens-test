@@ -19,17 +19,13 @@ def normalize_text(value: str) -> str:
     return "\t".join(" ".join(part.split()) for part in value.split("\t"))
 
 
-def read_document_rows(
-    path: Path, extension: str, ocr: OcrOptions | None
-) -> list[list[Cell]]:
+def read_document_rows(path: Path, extension: str, ocr: OcrOptions | None) -> list[list[Cell]]:
     """문서 전체를 읽어 ``줄``·``내용`` 행으로 바꾼다."""
     with open_document(path, extension, ocr, allow_missing_ocr=True) as document:
         return [[index, entry.text] for index, entry in enumerate(document.entries, start=1)]
 
 
-def suggest_document_rules(
-    path: Path, extension: str, ocr: OcrOptions | None
-) -> list[Suggestion]:
+def suggest_document_rules(path: Path, extension: str, ocr: OcrOptions | None) -> list[Suggestion]:
     """기존 분석 버전과 관계없이 현재 문서 원문에서 안전한 정제 규칙을 추천한다."""
     rows = read_document_rows(path, extension, ocr)
     values = [str(row[1]) for row in rows]
