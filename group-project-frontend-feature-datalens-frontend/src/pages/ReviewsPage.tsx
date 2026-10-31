@@ -1,3 +1,4 @@
+import { useSession } from "../state/session";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Button } from "../components/Button";
@@ -7,6 +8,9 @@ import { REVIEW_REASON_LABEL } from "../lib/labels";
 import { useComplaintData } from "../state/complaintData";
 
 export function ReviewsPage() {
+  const { user } = useSession();
+  // 로그인 사용자가 없으면 데모·인증 꺼짐 모드이므로 그대로 둔다. 실제 권한은 서버가 검사한다
+  const canDecide = !user || user.role === "admin";
   const { reviews, complaints, categories, categoryById, confirmReview, loading, error } = useComplaintData();
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
@@ -83,7 +87,7 @@ export function ReviewsPage() {
                       </option>
                     ))}
                   </select>
-                  <Button onClick={() => {
+                  <Button disabled={!canDecide} onClick={() => {
                     void confirmReview(row.review.id, selected)
                       .then(() => setActionError(null))
                       .catch((reviewError: unknown) => {

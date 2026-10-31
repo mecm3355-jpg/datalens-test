@@ -5,13 +5,17 @@
 
 import hashlib
 from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 import pytest
+from bson import ObjectId
 from fastapi.testclient import TestClient
+from pymongo import MongoClient
 
+from app.main import create_app
 from app.services.embedding import Vectors, normalize, set_embedder_override
-from tests.conftest import requires_db
+from tests.conftest import TEST_URI, make_settings, requires_db
 from tests.test_analyze_flow import run_worker, upload
 
 pytestmark = requires_db
@@ -316,3 +320,77 @@ def test_ocr_text_file_is_split_by_rule(db_client: TestClient) -> None:
         f"가로등 고장 신고 {n}" for n in range(1, 4)
     ]
     assert {item["receivedAt"][:10] for item in mine} == {f"2026-10-2{n}" for n in range(1, 4)}
+
+
+@requires_db
+def test_only_admin_decides_and_sees_all_users(tmp_path: Path) -> None:
+    """일반 사용자는 결정할 수 없고, 관리자는 다른 사용자의 후보를 결정하며 이름이 기록된다."""
+    assert TEST_URI is not None
+    db_name = f"datalens_admin_test_{ObjectId()}"
+    settings = make_settings(tmp_path, auth_required=True, auth_cookie_secure=False)
+    settings.mongodb_uri = TEST_URI
+    settings.mongodb_db_name = db_name
+
+    def signup(client: TestClient, email: str, name: str) -> None:
+        """테스트 계정을 만들고 그 계정으로 로그인한다.
+
+        파라미터:
+            client: 테스트 클라이언트
+            email: 이메일
+            name: 표시 이름
+        """
+        res = client.post(
+            "/api/v1/auth/signup",
+            json={"email": email, "displayName": name, "password": "test-password-123"},
+        )
+        assert res.status_code == 201
+
+    try:
+        with TestClient(create_app(settings)) as client:
+            signup(client, "admin@example.com", "관리자")
+            assert client.post("/api/v1/auth/logout").status_code == 200
+            signup(client, "user@example.com", "일반 사용자")
+            file_id = upload(client, "jan.csv", csv_bytes(first_month()))
+            analyze(client, file_id)
+            lights = candidate_for(client, "가로등")
+            url = f"/api/v1/complaints/categories/candidates/{lights['candidateId']}/decision"
+            body = {"decision": "approved", "group": "시설", "decidedBy": "가짜 이름"}
+
+            denied = client.post(url, json=body)
+            assert denied.status_code == 403
+            assert denied.json()["error"]["code"] == "ADMIN_REQUIRED"
+            reviews = client.post(
+                "/api/v1/complaints/reviews/000000000000000000000000",
+                json={"reviewedBy": "가짜 이름"},
+            )
+            assert reviews.status_code == 403
+
+            assert client.post("/api/v1/auth/logout").status_code == 200
+            login = client.post(
+                "/api/v1/auth/login",
+                json={"email": "admin@example.com", "password": "test-password-123"},
+            )
+            assert login.status_code == 200
+            # 관리자는 다른 사용자의 후보를 볼 수 있지만 파일은 본인 것만 본다
+            assert candidate_for(client, "가로등")["candidateId"] == lights["candidateId"]
+            assert client.get("/api/v1/files").json()["data"]["total"] == 0
+
+            assert client.post(url, json=body).status_code == 200
+            candidates = client.get(
+                "/api/v1/complaints/categories/candidates?decision=approved"
+            ).json()["data"]["items"]
+            assert candidates[0]["decidedBy"] == "관리자"
+
+            # 배정된 민원은 원래 소유자에게 그대로 보인다
+            assert client.post("/api/v1/auth/logout").status_code == 200
+            login = client.post(
+                "/api/v1/auth/login",
+                json={"email": "user@example.com", "password": "test-password-123"},
+            )
+            assert login.status_code == 200
+            mine = client.get("/api/v1/complaints?limit=200").json()["data"]
+            assert mine["total"] == 24
+            assert sum(1 for item in mine["items"] if item["categoryId"]) >= 8
+    finally:
+        with MongoClient[dict[str, object]](TEST_URI) as mongo:
+            mongo.drop_database(db_name)

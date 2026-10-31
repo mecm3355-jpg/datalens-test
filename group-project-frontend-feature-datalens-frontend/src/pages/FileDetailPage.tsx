@@ -95,6 +95,10 @@ function FileDetail({ fileId }: { fileId: string }) {
     ? { code: dataMode === "api" ? "SERVER_PROCESSING_FAILED" : "DEMO_PROCESSING_FAILED", message: file.processingError }
     : job?.error;
 
+  // 서버가 스캔본을 못 읽었으면 파일이 실패 상태여도 브라우저 OCR로 이어 갈 수 있어야 한다
+  const ocrMissing = job?.error?.code === "OCR_NOT_AVAILABLE"
+    || Boolean(file.processingError?.startsWith("OCR_NOT_AVAILABLE"));
+
   const retryProcessing = async () => {
     const started = await retryFileProcessing(file.id);
     if (started) {
@@ -270,15 +274,17 @@ function FileDetail({ fileId }: { fileId: string }) {
         </section>
       ) : null}
 
-      {dataMode === "api" && file.status === "completed" && ["tabular", "text", "document"].includes(file.fileCategory)
+      {dataMode === "api" && (file.status === "completed" || ocrMissing) && ["tabular", "text", "document"].includes(file.fileCategory)
         ? <ComplaintAnalysisCard
             file={file}
             complaintCount={preview.length}
-            scanned={quality.some((issue) => issue.type === "no_text_layer")}
+            scanned={ocrMissing || quality.some((issue) => issue.type === "no_text_layer")}
+            diagnosisReady={ocrMissing || cleaningArtifact(file.id) !== null}
           />
         : null}
 
-      {file.columns.length > 0 ? <MappingCard file={file} /> : null}
+      {/* 서버에 저장되지 않는 데모용 칸이다. API 모드의 열 선택은 민원 분석 칸에서 한다 */}
+      {dataMode !== "api" && file.columns.length > 0 ? <MappingCard file={file} /> : null}
 
       {!analysisUnsupported ? <article className="card">
         <div className="card-head">
@@ -384,7 +390,12 @@ function guessComplaintMapping(columns: string[]): ComplaintMapping {
 }
 
 /** 민원 분석을 시작하는 카드입니다. AI 없이 서버의 규칙 방식으로 분석합니다. */
-function ComplaintAnalysisCard({ file, complaintCount, scanned }: { file: DataFile; complaintCount: number; scanned: boolean }) {
+function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }: {
+  file: DataFile;
+  complaintCount: number;
+  scanned: boolean;
+  diagnosisReady: boolean;
+}) {
   const { requestComplaintAnalysis, analyzeOcrText } = useWorkspace();
   const navigate = useNavigate();
   const [scanSource, setScanSource] = useState<File | null>(null);
@@ -401,7 +412,10 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned }: { file: DataFi
   const [splitRule, setSplitRule] = useState(
     file.extension.toLowerCase() === "pdf" || file.originalName.endsWith(".ocr.txt") ? "sinmungo" : "",
   );
-  const canStart = scanned ? scanSource !== null : !isTable || Boolean(mapping.content || mapping.title);
+  // 문서는 진단 결과가 와야 스캔본인지 안다. 그 전에 시작하면 스캔본을 서버로 보내 실패한다
+  const waitingDiagnosis = isDocument && !diagnosisReady;
+  const canStart = !waitingDiagnosis
+    && (scanned ? scanSource !== null : !isTable || Boolean(mapping.content || mapping.title));
 
   const start = async () => {
     setIsRunning(true);
@@ -492,6 +506,7 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned }: { file: DataFi
           쪽수에 따라 몇 분 걸릴 수 있으니 창을 닫지 마세요.
         </p>
       ) : null}
+      {waitingDiagnosis ? <p className="caption" role="status">파일 진단 결과를 불러오는 중입니다.</p> : null}
       {ocrProgress ? <p className="caption" role="status">{ocrProgress}</p> : null}
       {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
     </article>

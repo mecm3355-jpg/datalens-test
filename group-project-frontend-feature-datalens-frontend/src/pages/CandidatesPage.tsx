@@ -1,3 +1,4 @@
+import { useSession } from "../state/session";
 import { useState } from "react";
 import { Button } from "../components/Button";
 import { CategoryTabs } from "../components/CategoryTabs";
@@ -17,6 +18,9 @@ const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7);
 
 export function CandidatesPage() {
+  const { user } = useSession();
+  // 로그인 사용자가 없으면 데모·인증 꺼짐 모드이므로 그대로 둔다. 실제 권한은 서버가 검사한다
+  const canDecide = !user || user.role === "admin";
   const { candidates, categories, categoryById, decideCandidate, loading, error } = useComplaintData();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("pending");
   const [mergeTarget, setMergeTarget] = useState<Record<string, string>>({});
@@ -85,7 +89,8 @@ export function CandidatesPage() {
                   {text}
                 </p>
               ))}
-              {decision === "pending" ? (
+              {decision === "pending" && !canDecide ? <p className="caption">승인은 관리자만 할 수 있습니다.</p> : null}
+              {decision === "pending" && canDecide ? (
                 <div className="action-row notice">
                   <Button onClick={() => void decide(candidate.id, "approved")}>승인</Button>
                   <Button variant="secondary" onClick={() => void decide(candidate.id, "held")}>
