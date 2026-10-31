@@ -19,8 +19,7 @@
       "entrypoint": "api/blob-upload.ts"
     },
     "backend": {
-      "root": "group-project-backend-feature-datalens-backend",
-      "entrypoint": "app.vercel:app"
+      "root": "group-project-backend-feature-datalens-backend"
     }
   },
   "rewrites": [
