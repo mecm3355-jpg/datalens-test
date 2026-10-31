@@ -1,4 +1,3 @@
-import type { ComplaintMapping } from "../api/datalens";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   candidates,
@@ -10,7 +9,7 @@ import {
 } from "../data/mock";
 import { inspectDemoFile } from "../lib/demoProcessing";
 import { AppError } from "../api/AppError";
-import type { ApiDashboardSummary } from "../api/datalens";
+import type { ApiDashboardSummary, ComplaintAnalysisOptions } from "../api/datalens";
 import {
   useApiWorkspace,
   type UploadLifecycleCallbacks,
@@ -22,6 +21,7 @@ import type {
   CleaningPreviewRow,
   CleaningRule,
   DataFile,
+  DataReport,
   DemoCleaningArtifact,
   FileCategory,
   Job,
@@ -52,7 +52,7 @@ type WorkspaceValue = {
   dashboardSummary: ApiDashboardSummary | null;
   files: DataFile[];
   addFiles: (list: File[], callbacks?: UploadLifecycleCallbacks) => Promise<UploadResult[]>;
-  retryFileProcessing: (fileId: string) => Promise<boolean>;
+  retryFileProcessing: (fileId: string) => Promise<void>;
   ensureFileData: (fileId: string) => Promise<void>;
   candidateDecision: (id: string) => CandidateDecision;
   mergedInto: (id: string) => string | null;
@@ -62,9 +62,10 @@ type WorkspaceValue = {
   mappings: Mapping[];
   addMapping: (mapping: Omit<Mapping, "id" | "createdAt">) => void;
   analysisRequested: (fileId: string) => boolean;
-  requestAnalysis: (fileId: string) => Promise<void>;
-  requestComplaintAnalysis: (fileId: string, mapping: ComplaintMapping, splitRule?: string) => Promise<void>;
+  requestAnalysis: (fileId: string, options?: ComplaintAnalysisOptions) => Promise<void>;
   analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
+  reportForFile: (fileId: string) => DataReport | null;
+  requestReport: (fileId: string) => Promise<void>;
   cleaningDecision: (fileId: string, ruleId: string) => CleaningDecision;
   decideCleaningRule: (fileId: string, ruleId: string, decision: CleaningDecision) => void;
   cleaningRules: (fileId: string) => CleaningRule[];
@@ -237,9 +238,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       retryFileProcessing: async (fileId) => {
         if (DATA_MODE === "api") return api.retryFileProcessing(fileId);
         const file = fileHandles.current.get(fileId);
-        if (!file) return false;
+        if (!file) {
+          throw new AppError(
+            "ORIGINAL_FILE_MISSING",
+            "원본 파일이 현재 브라우저 세션에 없습니다. 파일 목록에서 원본을 다시 선택해 주세요.",
+          );
+        }
         void processFile(fileId, file);
-        return true;
       },
       ensureFileData: (fileId) => DATA_MODE === "api" ? api.ensureFileData(fileId) : Promise.resolve(),
       candidateDecision: (id) =>
@@ -275,18 +280,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ]);
       },
       analysisRequested: (fileId) => Boolean(requested[fileId]),
-      requestAnalysis: async (fileId) => {
-        if (DATA_MODE === "api") return api.requestAnalysis(fileId);
-        setRequested((current) => ({ ...current, [fileId]: true }));
-      },
-      requestComplaintAnalysis: async (fileId, mapping, splitRule) => {
-        if (DATA_MODE === "api") return api.requestComplaintAnalysis(fileId, mapping, splitRule);
+      requestAnalysis: async (fileId, options) => {
+        if (DATA_MODE === "api") return api.requestAnalysis(fileId, options);
         setRequested((current) => ({ ...current, [fileId]: true }));
       },
       analyzeOcrText: async (originalName, text, splitRule) => {
         if (DATA_MODE === "api") return api.analyzeOcrText(originalName, text, splitRule);
         throw new AppError("DEMO_NOT_SUPPORTED", "데모 모드에서는 스캔 PDF를 분석할 수 없습니다.");
       },
+      reportForFile: (fileId) => DATA_MODE === "api" ? api.reports[fileId] ?? null : null,
+      requestReport: (fileId) => DATA_MODE === "api"
+        ? api.requestReport(fileId)
+        : Promise.resolve(),
       cleaningDecision: (fileId, ruleId) => cleaningDecisions[`${fileId}:${ruleId}`]
         ?? (DATA_MODE === "api" && api.appliedCleaning[fileId]?.includes(ruleId)
           ? "approved"

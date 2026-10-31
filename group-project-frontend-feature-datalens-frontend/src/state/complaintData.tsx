@@ -11,11 +11,14 @@ import {
   datalensApi,
   type ApiCandidate,
   type ApiCategory,
+  type ApiCategoryChange,
   type ApiComplaint,
+  type ApiComplaintInsight,
   type ApiReview,
 } from "../api/datalens";
 import { AppError } from "../api/AppError";
-import type { Candidate, CandidateDecision, Category, Complaint, Issue, ReviewItem, Urgency } from "../types";
+import { COMPLAINT_DATA_CHANGED_EVENT } from "../lib/events";
+import type { Candidate, CandidateDecision, Category, Complaint, Issue, Mapping, ReviewItem, Urgency } from "../types";
 
 const DATA_MODE = import.meta.env.VITE_DATA_MODE === "api" ? "api" : "demo";
 const URGENCY_RANK: Record<Urgency, number> = { 낮음: 0, 보통: 1, 높음: 2, 긴급: 3 };
@@ -55,8 +58,18 @@ function toComplaint(item: ApiComplaint, taxonomyVersion: number): Complaint {
   };
 }
 
-function toCategory(item: ApiCategory, counts: Map<string, number>): Category {
-  const count = counts.get(item.categoryId) ?? 0;
+function previousPeriod(period: string): string {
+  const [year, month] = period.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 2, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function toCategory(
+  item: ApiCategory,
+  currentCounts: Map<string, number>,
+  previousCounts: Map<string, number>,
+): Category {
+  const count = currentCounts.get(item.categoryId) ?? 0;
   return {
     categoryId: item.categoryId,
     name: item.name,
@@ -64,7 +77,7 @@ function toCategory(item: ApiCategory, counts: Map<string, number>): Category {
     definition: item.definition,
     keywords: item.keywords,
     count,
-    previousCount: count,
+    previousCount: previousCounts.get(item.categoryId) ?? 0,
     createdInVersion: item.createdInVersion,
   };
 }
@@ -80,6 +93,10 @@ function toCandidate(item: ApiCandidate): Candidate {
     suggestedGroup: item.suggestedGroup ?? "미분류",
     decision: item.decision,
     exemplars: item.exemplars,
+    categoryId: item.categoryId,
+    mergedIntoCategoryId: item.mergedIntoCategoryId,
+    decidedBy: item.decidedBy,
+    decidedAt: item.decidedAt,
   };
 }
 
@@ -90,8 +107,26 @@ function toReview(item: ApiReview): ReviewItem | null {
     complaintId: item.complaint.complaintId,
     reason: item.reason,
     suggestedCategoryId: item.suggestedCategoryId,
+    reviewedCategoryId: item.reviewedCategoryId,
+    reviewedBy: item.reviewedBy,
+    reviewedAt: item.reviewedAt,
     status: item.status,
   };
+}
+
+function toMappings(items: ApiCategoryChange[]): Mapping[] {
+  return items.flatMap((item) => item.toCategoryIds.map((targetId, index) => ({
+    id: `${item.changeId}:${targetId}`,
+    type: item.changeType,
+    fromCategoryId: item.fromCategoryId,
+    toCategoryId: targetId,
+    fromName: item.fromName,
+    toName: item.toNames[index] ?? targetId,
+    fromVersion: item.fromVersion,
+    toVersion: item.toVersion,
+    reason: item.reason,
+    createdAt: item.createdAt,
+  })));
 }
 
 function deriveIssues(complaints: Complaint[]): Issue[] {
@@ -128,16 +163,26 @@ function deriveIssues(complaints: Complaint[]): Issue[] {
 type ComplaintDataValue = {
   loading: boolean;
   error: string | null;
-  reload: () => Promise<void>;
   taxonomyVersion: number;
   complaints: Complaint[];
   categories: Category[];
   candidates: Candidate[];
   reviews: ReviewItem[];
   issues: Issue[];
+  insights: ApiComplaintInsight[];
+  mappings: Mapping[];
   categoryById: (id: string | null) => Category | undefined;
   decideCandidate: (id: string, decision: CandidateDecision, mergedIntoId?: string) => Promise<void>;
   confirmReview: (id: string, categoryId: string) => Promise<void>;
+  mergeCategories: (sourceCategoryId: string, targetCategoryId: string, reason: string) => Promise<void>;
+  splitCategory: (input: {
+    sourceCategoryId: string;
+    name: string;
+    group?: string;
+    definition?: string;
+    complaintIds: string[];
+    reason: string;
+  }) => Promise<void>;
 };
 
 const ComplaintDataContext = createContext<ComplaintDataValue | null>(null);
@@ -150,27 +195,53 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState<Category[]>(DATA_MODE === "demo" ? demoCategories : []);
   const [candidates, setCandidates] = useState<Candidate[]>(DATA_MODE === "demo" ? demoCandidates : []);
   const [reviews, setReviews] = useState<ReviewItem[]>(DATA_MODE === "demo" ? demoReviews : []);
+  const [insights, setInsights] = useState<ApiComplaintInsight[]>([]);
+  const [mappings, setMappings] = useState<Mapping[]>([]);
 
   const load = useCallback(async () => {
     if (DATA_MODE !== "api") return;
     setLoading(true);
     try {
-      const [complaintResult, taxonomy, candidateItems, reviewItems] = await Promise.all([
+      const [complaintResult, taxonomy, candidateItems, reviewItems, stats, changeItems, insightItems] = await Promise.all([
         datalensApi.complaints(),
         datalensApi.taxonomy().catch(() => ({ version: 0, items: [] })),
         datalensApi.candidates().catch(() => []),
         datalensApi.reviews().catch(() => []),
+        datalensApi.complaintStats().catch(() => null),
+        datalensApi.categoryChanges().catch(() => []),
+        datalensApi.complaintInsights().catch(() => []),
       ]);
       const nextComplaints = complaintResult.items.map((item) => toComplaint(item, taxonomy.version));
-      const counts = new Map<string, number>();
+      const latestPeriod = nextComplaints.reduce(
+        (latest, item) => item.period > latest ? item.period : latest,
+        "",
+      );
+      const priorPeriod = latestPeriod ? previousPeriod(latestPeriod) : "";
+      const currentCounts = new Map<string, number>();
+      const previousCounts = new Map<string, number>();
       nextComplaints.forEach((item) => {
-        if (item.categoryId) counts.set(item.categoryId, (counts.get(item.categoryId) ?? 0) + 1);
+        if (!item.categoryId) return;
+        if (item.period === latestPeriod) {
+          currentCounts.set(item.categoryId, (currentCounts.get(item.categoryId) ?? 0) + 1);
+        } else if (item.period === priorPeriod) {
+          previousCounts.set(item.categoryId, (previousCounts.get(item.categoryId) ?? 0) + 1);
+        }
       });
+      if (stats) {
+        currentCounts.clear();
+        previousCounts.clear();
+        stats.categories.forEach((item) => {
+          currentCounts.set(item.categoryId, item.currentCount);
+          previousCounts.set(item.categoryId, item.previousCount);
+        });
+      }
       setTaxonomyVersion(taxonomy.version);
       setComplaints(nextComplaints);
-      setCategories(taxonomy.items.map((item) => toCategory(item, counts)));
+      setCategories(taxonomy.items.map((item) => toCategory(item, currentCounts, previousCounts)));
       setCandidates(candidateItems.map(toCandidate));
       setReviews(reviewItems.flatMap((item) => toReview(item) ?? []));
+      setMappings(toMappings(changeItems));
+      setInsights(insightItems);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "민원 데이터를 불러오지 못했습니다.");
@@ -183,16 +254,24 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
     void Promise.resolve().then(load);
   }, [load]);
 
+  useEffect(() => {
+    if (DATA_MODE !== "api") return;
+    const refresh = () => { void load(); };
+    window.addEventListener(COMPLAINT_DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(COMPLAINT_DATA_CHANGED_EVENT, refresh);
+  }, [load]);
+
   const value = useMemo<ComplaintDataValue>(() => ({
     loading,
     error,
-    reload: load,
     taxonomyVersion,
     complaints,
     categories,
     candidates,
     reviews,
     issues: DATA_MODE === "api" ? deriveIssues(complaints) : demoIssues,
+    insights,
+    mappings,
     categoryById: (id) => categories.find((category) => category.categoryId === id),
     decideCandidate: async (id, decision, mergedIntoId) => {
       if (DATA_MODE === "api") {
@@ -211,7 +290,17 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
       }
       setReviews((current) => current.map((item) => item.id === id ? { ...item, status: "done" } : item));
     },
-  }), [candidates, categories, complaints, error, load, loading, reviews, taxonomyVersion]);
+    mergeCategories: async (sourceCategoryId, targetCategoryId, reason) => {
+      if (DATA_MODE !== "api") return;
+      await datalensApi.mergeCategories(sourceCategoryId, targetCategoryId, reason);
+      await load();
+    },
+    splitCategory: async (input) => {
+      if (DATA_MODE !== "api") return;
+      await datalensApi.splitCategory(input);
+      await load();
+    },
+  }), [candidates, categories, complaints, error, insights, load, loading, mappings, reviews, taxonomyVersion]);
 
   return <ComplaintDataContext.Provider value={value}>{children}</ComplaintDataContext.Provider>;
 }

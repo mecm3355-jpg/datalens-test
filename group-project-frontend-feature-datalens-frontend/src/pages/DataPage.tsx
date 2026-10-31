@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
+import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import { formatNumber } from "../lib/format";
@@ -7,12 +8,17 @@ import { useWorkspace } from "../state/workspace";
 
 export function DataPage() {
   const workspace = useWorkspace();
-  const analyzableFiles = workspace.files.filter((file) => workspace.cleaningArtifact(file.id)?.analysis);
+  const ensureFileData = workspace.ensureFileData;
+  const analyzableFiles = workspace.files.filter((file) => (
+    file.status === "completed" && file.analysisSupported !== false && file.fileCategory !== "other"
+  ));
   const [selectedId, setSelectedId] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
   const activeId = selectedId || analyzableFiles[0]?.id || "";
   const file = workspace.files.find((item) => item.id === activeId);
   const analysis = workspace.cleaningArtifact(activeId)?.analysis;
-  const report = useMemo(() => {
+  const fallbackReport = useMemo(() => {
     if (!file || !analysis) return [];
     const lines = [`${file.originalName}은(는) ${analysis.detectedFormat} 형식으로 확인되었습니다.`];
     if (analysis.quality) {
@@ -31,6 +37,24 @@ export function DataPage() {
     }
     return lines;
   }, [analysis, file]);
+  const report = workspace.reportForFile(activeId);
+
+  useEffect(() => {
+    if (activeId) void ensureFileData(activeId);
+  }, [activeId, ensureFileData]);
+
+  const createReport = async () => {
+    if (!activeId) return;
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      await workspace.requestReport(activeId);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "리포트를 생성하지 못했습니다.");
+    } finally {
+      setReportLoading(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -104,8 +128,47 @@ export function DataPage() {
           </section>
 
           <article className="card report-card">
-            <div className="card-head"><div><h2 className="title-sm">분석 요약</h2><p className="caption">서버 분석 결과 · 규칙 기반 요약</p></div><span className="pill pill-pending">자동 적용 안 함</span></div>
-            {report.map((line) => <p className="body report-line" key={line}>{line}</p>)}
+            <div className="card-head">
+              <div>
+                <h2 className="title-sm">분석 요약</h2>
+                <p className="caption">{workspace.dataMode === "api" ? "백엔드 생성 리포트" : "데모 규칙 기반 요약"}</p>
+              </div>
+              {workspace.dataMode === "api" ? (
+                <Button onClick={() => void createReport()} disabled={reportLoading}>
+                  {reportLoading ? "생성 중…" : report ? "리포트 다시 생성" : "리포트 생성"}
+                </Button>
+              ) : <span className="pill pill-pending">자동 적용 안 함</span>}
+            </div>
+            {reportError ? <p className="feedback feedback-error" role="alert">{reportError}</p> : null}
+            {report ? (
+              <>
+                <p className="body report-line">{report.summary}</p>
+                {report.keyFindings.map((finding) => <p className="body report-line" key={finding}>• {finding}</p>)}
+                {report.qualityIssues.length > 0 ? (
+                  <DataTable
+                    framed={false}
+                    rows={report.qualityIssues}
+                    rowKey={(issue) => `${issue.issue}:${issue.impact}`}
+                    empty="해석된 품질 문제가 없습니다."
+                    columns={[
+                      { key: "severity", header: "정도", render: (issue) => issue.severity },
+                      { key: "issue", header: "문제", render: (issue) => issue.issue },
+                      { key: "cause", header: "추정 원인", render: (issue) => issue.likelyCause },
+                      { key: "impact", header: "영향", render: (issue) => issue.impact },
+                    ]}
+                  />
+                ) : null}
+                {report.cleaningRecommendations.map((recommendation) => (
+                  <p className="body report-line" key={`${recommendation.action}:${recommendation.reason}`}>
+                    <strong>{recommendation.action}</strong> — {recommendation.reason}
+                  </p>
+                ))}
+                {report.analysisSuggestions.map((suggestion) => <p className="body report-line" key={suggestion}>분석 제안: {suggestion}</p>)}
+                {report.caveats.map((caveat) => <p className="caption notice" key={caveat}>{caveat}</p>)}
+              </>
+            ) : workspace.dataMode === "demo" ? (
+              fallbackReport.map((line) => <p className="body report-line" key={line}>{line}</p>)
+            ) : <p className="empty">리포트 생성 버튼을 누르면 서버가 최신 분석 결과로 리포트를 만듭니다.</p>}
             <p className="caption notice">AI 연결 후에도 통계 수치는 백엔드 계산 결과만 인용하고, 추천 규칙은 사용자 승인 전까지 실행하지 않습니다.</p>
           </article>
         </>

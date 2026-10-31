@@ -8,7 +8,7 @@ export type RequestType = "수리·조치" | "단속" | "신설·개선" | "질�
 
 export type Affected = "어린이" | "노인" | "장애인" | "일반";
 
-export type ReviewReason = "ambiguous" | "urgent" | "attributeUncertain";
+export type ReviewReason = "ambiguous" | "urgent" | "attributeUncertain" | "ocrUncertain";
 
 export type FileStatus = "queued" | "processing" | "completed" | "failed";
 
@@ -84,16 +84,21 @@ export type FileAnalysis = {
   frequencies: FrequencyItem[];
   textStats: { lines: number; words: number; characters: number } | null;
   imageMetadata: { width: number | null; height: number | null } | null;
+  thumbnail: string | null;
 };
 
 export type MappingField =
+  | "title"
   | "content"
   | "receivedAt"
   | "region"
+  | "address"
   | "longitude"
   | "latitude"
   | "agency"
   | "sourceId"
+  | "sourceCategory"
+  | "result"
   | "ignore";
 
 export type Category = {
@@ -163,6 +168,10 @@ export type Candidate = {
   suggestedGroup: string;
   decision: CandidateDecision;
   exemplars: string[];
+  categoryId?: string | null;
+  mergedIntoCategoryId?: string | null;
+  decidedBy?: string | null;
+  decidedAt?: string | null;
 };
 
 export type ReviewItem = {
@@ -170,7 +179,28 @@ export type ReviewItem = {
   complaintId: string;
   reason: ReviewReason;
   suggestedCategoryId: string | null;
+  reviewedCategoryId?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
   status: "pending" | "done";
+};
+
+export type DataReport = {
+  summary: string;
+  keyFindings: string[];
+  qualityIssues: Array<{
+    severity: "high" | "medium" | "low";
+    issue: string;
+    likelyCause: string;
+    impact: string;
+  }>;
+  cleaningRecommendations: Array<{
+    priority: "high" | "medium" | "low";
+    action: string;
+    reason: string;
+  }>;
+  analysisSuggestions: string[];
+  caveats: string[];
 };
 
 export type DataFile = {

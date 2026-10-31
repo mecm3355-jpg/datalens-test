@@ -4,17 +4,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileDetailPage } from "./FileDetailPage";
 
 const useWorkspaceMock = vi.hoisted(() => vi.fn());
-const reload = vi.hoisted(() => vi.fn(async () => undefined));
 const readScannedPdf = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/browserOcr", () => ({ readScannedPdf }));
 
 vi.mock("../state/workspace", () => ({ useWorkspace: useWorkspaceMock }));
 vi.mock("../state/complaintData", () => ({
-  useComplaintData: () => ({ complaints: [], reload }),
+  useComplaintData: () => ({ complaints: [] }),
 }));
 
-function workspace(requestComplaintAnalysis: ReturnType<typeof vi.fn>, columns = ["제목", "민원내용", "접수일"]) {
+function workspace(requestAnalysis: ReturnType<typeof vi.fn>, columns = ["제목", "민원내용", "접수일"]) {
   return {
     files: [{
       id: "file-1",
@@ -32,8 +31,8 @@ function workspace(requestComplaintAnalysis: ReturnType<typeof vi.fn>, columns =
     loading: false,
     ensureFileData: vi.fn(async () => undefined),
     analysisRequested: vi.fn(() => false),
-    requestAnalysis: vi.fn(),
-    requestComplaintAnalysis,
+    requestAnalysis,
+    reportForFile: vi.fn(() => null),
     retryFileProcessing: vi.fn(),
     cleaningRows: vi.fn(() => []),
     cleaningArtifact: vi.fn(() => null),
@@ -56,15 +55,13 @@ describe("민원 분석 카드", () => {
     vi.clearAllMocks();
   });
 
-  it("추정한 열로 분석을 시작하고 끝나면 민원을 다시 불러온다", async () => {
-    const start = vi.fn(async () => undefined);
-    useWorkspaceMock.mockReturnValue(workspace(start));
+  it("표 파일은 민원 분석 칸 대신 위쪽 버튼으로 시작한다", async () => {
+    useWorkspaceMock.mockReturnValue(workspace(vi.fn(), []));
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: "민원 분석 시작" }));
-
-    await waitFor(() => expect(reload).toHaveBeenCalled());
-    expect(start).toHaveBeenCalledWith("file-1", { content: "민원내용", title: "제목", receivedAt: "접수일" }, undefined);
+    await screen.findByRole("button", { name: /분석/ });
+    expect(screen.queryByText("민원 분석")).toBeNull();
+    expect(screen.queryByLabelText("원본 PDF 선택")).toBeNull();
   });
 
   it("PDF는 기본으로 국민신문고 규칙으로 나눠 분석한다", async () => {
@@ -79,7 +76,7 @@ describe("민원 분석 카드", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "민원 분석 시작" }));
 
-    await waitFor(() => expect(start).toHaveBeenCalledWith("file-1", {}, "sinmungo"));
+    await waitFor(() => expect(start).toHaveBeenCalledWith("file-1", { splitRule: "sinmungo" }));
   });
 
   function scannedWorkspace(analyzeOcrText: ReturnType<typeof vi.fn>) {
@@ -146,26 +143,16 @@ describe("민원 분석 카드", () => {
     expect(await screen.findByLabelText("원본 PDF 선택")).toBeTruthy();
   });
 
-  it("API 모드에서는 저장되지 않는 컬럼 매핑 칸을 보여 주지 않는다", async () => {
-    useWorkspaceMock.mockReturnValue(workspace(vi.fn()));
-    renderPage();
-
-    await screen.findByRole("button", { name: "민원 분석 시작" });
-    expect(screen.queryByText("컬럼 매핑")).toBeNull();
-  });
-
-  it("내용이나 제목 열을 고르기 전에는 시작할 수 없다", async () => {
-    useWorkspaceMock.mockReturnValue(workspace(vi.fn(), ["번호", "담당"]));
-    renderPage();
-
-    expect(await screen.findByRole("button", { name: "민원 분석 시작" })).toHaveProperty("disabled", true);
-  });
-
   it("분석 실패 내용을 화면에 보여 준다", async () => {
     const start = vi.fn(async () => {
       throw new Error("분석에 실패했습니다.");
     });
-    useWorkspaceMock.mockReturnValue(workspace(start));
+    const base = workspace(start, []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      cleaningArtifact: vi.fn(() => ({ qualityIssues: [] })),
+      files: [{ ...base.files[0], originalName: "민원.txt", extension: "txt", fileCategory: "text" }],
+    });
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "민원 분석 시작" }));

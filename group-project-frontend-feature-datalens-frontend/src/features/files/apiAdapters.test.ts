@@ -104,4 +104,45 @@ describe("파일 API 화면 변환", () => {
     expect(cleanRuleKey({ type: "remove_duplicates", columns: ["지역", "내용"] }))
       .toBe(cleanRuleKey({ type: "remove_duplicates", columns: ["내용", "지역"] }));
   });
+
+  it("텍스트 줄·문자 통계를 보존하고 단어 수를 계산한다", () => {
+    const textPreview: ApiPreview = {
+      ...preview,
+      kind: "text",
+      format: "txt",
+      columns: null,
+      rows: null,
+      lines: ["첫 번째 민원", "두 번째 민원입니다"],
+    };
+    const textAnalysis: ApiAnalysis = {
+      ...analysis,
+      analysis: { lineCount: 2, characterCount: 18 },
+    };
+
+    expect(toArtifact(textPreview, textAnalysis, []).analysis?.textStats).toEqual({
+      lines: 2,
+      words: 6,
+      characters: 18,
+    });
+  });
+
+  it("이미지 해상도와 서버 썸네일을 화면 산출물에 보존한다", () => {
+    const imagePreview: ApiPreview = {
+      ...preview,
+      kind: "text",
+      format: "image",
+      columns: null,
+      rows: null,
+      lines: [],
+      thumbnail: "data:image/jpeg;base64,example",
+    };
+    const imageAnalysis: ApiAnalysis = {
+      ...analysis,
+      analysis: { image: { width: 640, height: 480, format: "PNG" } },
+    };
+    const artifact = toArtifact(imagePreview, imageAnalysis, []);
+
+    expect(artifact.analysis?.imageMetadata).toEqual({ width: 640, height: 480 });
+    expect(artifact.analysis?.thumbnail).toBe("data:image/jpeg;base64,example");
+  });
 });

@@ -1,4 +1,3 @@
-import { useSession } from "../state/session";
 import { useState } from "react";
 import { Button } from "../components/Button";
 import { CategoryTabs } from "../components/CategoryTabs";
@@ -6,6 +5,7 @@ import { PageIntro } from "../components/PageIntro";
 import { formatNumber, formatPeriod } from "../lib/format";
 import { DECISION_LABEL } from "../lib/labels";
 import { useComplaintData } from "../state/complaintData";
+import { useSession } from "../state/session";
 import type { CandidateDecision } from "../types";
 
 const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
@@ -18,10 +18,9 @@ const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7);
 
 export function CandidatesPage() {
-  const { user } = useSession();
-  // 로그인 사용자가 없으면 데모·인증 꺼짐 모드이므로 그대로 둔다. 실제 권한은 서버가 검사한다
-  const canDecide = !user || user.role === "admin";
   const { candidates, categories, categoryById, decideCandidate, loading, error } = useComplaintData();
+  const { user } = useSession();
+  const canManage = user?.role === "admin" || user === null;
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("pending");
   const [mergeTarget, setMergeTarget] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
@@ -62,7 +61,7 @@ export function CandidatesPage() {
       <div className="stack">
         {visible.map((candidate) => {
           const decision = candidate.decision;
-          const mergedName = categoryById(mergeTarget[candidate.id] ?? null)?.name;
+          const mergedName = categoryById(candidate.mergedIntoCategoryId ?? mergeTarget[candidate.id] ?? null)?.name;
           return (
             <article className="card" key={candidate.id}>
               <div className="card-head">
@@ -89,8 +88,7 @@ export function CandidatesPage() {
                   {text}
                 </p>
               ))}
-              {decision === "pending" && !canDecide ? <p className="caption">승인은 관리자만 할 수 있습니다.</p> : null}
-              {decision === "pending" && canDecide ? (
+              {decision === "pending" && canManage ? (
                 <div className="action-row notice">
                   <Button onClick={() => void decide(candidate.id, "approved")}>승인</Button>
                   <Button variant="secondary" onClick={() => void decide(candidate.id, "held")}>
@@ -126,7 +124,11 @@ export function CandidatesPage() {
                   </Button>
                 </div>
               ) : null}
+              {decision === "pending" && !canManage ? <p className="notice">관리자만 후보를 결정할 수 있습니다.</p> : null}
               {decision === "merged" && mergedName ? <p className="notice">합친 대상: {mergedName}</p> : null}
+              {decision !== "pending" && candidate.decidedBy ? (
+                <p className="caption">결정자: {candidate.decidedBy}{candidate.decidedAt ? ` · ${candidate.decidedAt}` : ""}</p>
+              ) : null}
             </article>
           );
         })}

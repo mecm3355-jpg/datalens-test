@@ -42,7 +42,7 @@ describe("후보 승인 권한", () => {
     renderPage();
 
     expect(screen.queryByRole("button", { name: "합치기" })).toBeNull();
-    expect(screen.getByText("승인은 관리자만 할 수 있습니다.")).toBeTruthy();
+    expect(screen.getByText(/관리자만 후보를 결정/)).toBeTruthy();
   });
 
   it("관리자에게는 승인 버튼을 보여 준다", () => {

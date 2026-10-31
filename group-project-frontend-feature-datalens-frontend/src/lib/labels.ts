@@ -25,6 +25,7 @@ export const REVIEW_REASON_LABEL: Record<ReviewReason, string> = {
   ambiguous: "애매한 배정",
   urgent: "긴급",
   attributeUncertain: "속성 불확실",
+  ocrUncertain: "OCR 인식 불확실",
 };
 
 export const SEVERITY_LABEL = {
@@ -34,13 +35,17 @@ export const SEVERITY_LABEL = {
 } as const;
 
 export const MAPPING_FIELDS = [
+  { id: "title", label: "민원 제목" },
   { id: "content", label: "민원 내용" },
   { id: "receivedAt", label: "접수일시" },
   { id: "region", label: "지역" },
+  { id: "address", label: "주소" },
   { id: "longitude", label: "경도" },
   { id: "latitude", label: "위도" },
   { id: "agency", label: "처리기관" },
   { id: "sourceId", label: "원본 ID" },
+  { id: "sourceCategory", label: "기존 분류" },
+  { id: "result", label: "처리 결과" },
   { id: "ignore", label: "사용 안 함" },
 ] as const;
 

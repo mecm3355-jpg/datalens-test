@@ -22,12 +22,17 @@ class Settings(BaseSettings):
     # 이전 공용 운영자 로그인 환경 변수와의 배포 호환을 위해 읽기만 한다.
     auth_session_seconds: int = 8 * 60 * 60
     auth_cookie_secure: bool = True
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     auth_registration_enabled: bool = True
     auth_max_failed_attempts: int = 5
     auth_lockout_seconds: int = 15 * 60
     auth_password_reset_seconds: int = 30 * 60
     # 이메일 발송 연동 전 로컬 데모에서만 재설정 토큰을 응답에 포함한다.
     auth_expose_reset_token: bool = False
+    # 운영 비밀번호 재설정 메일(Resend HTTP API). 키·발신자·프런트 URL이 모두 있어야 활성화된다.
+    resend_api_key: SecretStr | None = None
+    password_reset_from: str | None = None
+    frontend_url: str = "http://localhost:5173"
 
     # 독립 배포된 Vite 프런트엔드가 API를 호출할 수 있는 출처 목록.
     # 쉼표로 구분해 Vercel 운영 도메인과 로컬 개발 주소를 함께 지정한다.
@@ -89,7 +94,13 @@ class Settings(BaseSettings):
             raise ValueError("AUTH_LOCKOUT_SECONDS는 60초 이상이어야 합니다.")
         if self.auth_password_reset_seconds < 300:
             raise ValueError("AUTH_PASSWORD_RESET_SECONDS는 300초 이상이어야 합니다.")
+        if self.auth_cookie_samesite == "none" and not self.auth_cookie_secure:
+            raise ValueError("AUTH_COOKIE_SAMESITE=none이면 AUTH_COOKIE_SECURE=true여야 합니다.")
         return self
+
+    def password_reset_delivery_configured(self) -> bool:
+        """운영 비밀번호 재설정 메일에 필요한 설정이 모두 있는지 확인한다."""
+        return bool(self.resend_api_key and self.password_reset_from and self.frontend_url)
 
     def allowed_cors_origins(self) -> list[str]:
         """쉼표로 구분한 CORS_ORIGINS를 빈 값 없이 정리한다.

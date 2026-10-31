@@ -121,6 +121,67 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
         """
         return await self._find({"candidateId": candidate_id, "status": "active"}, [])
 
+    async def by_category(self, category_id: str) -> list[ComplaintDocument]:
+        """현재 활성 민원 중 지정 카테고리에 속한 민원을 돌려준다."""
+        return await self._find({"categoryId": category_id, "status": "active"}, [])
+
+    async def reassign_category(
+        self,
+        complaint_ids: Sequence[ObjectId],
+        category_id: str,
+        group: str,
+        taxonomy_version: int,
+    ) -> int:
+        """선택한 민원을 새 카테고리와 체계 버전으로 옮긴다."""
+        if not complaint_ids:
+            return 0
+        result = await self.collection.update_many(
+            self._scoped({"_id": {"$in": list(complaint_ids)}, "status": "active"}),
+            {
+                "$set": {
+                    "categoryId": category_id,
+                    "group": group,
+                    "taxonomyVersion": taxonomy_version,
+                    "assignStatus": "confirmed",
+                    "updatedAt": utc_now(),
+                }
+            },
+        )
+        return result.modified_count
+
+    async def latest_periods(self, limit: int = 2) -> list[str]:
+        """민원이 있는 최근 월을 최신순으로 돌려준다."""
+        pipeline: list[dict[str, object]] = [
+            {"$match": self._scoped({"status": "active"})},
+            {"$group": {"_id": "$period"}},
+            {"$sort": {"_id": -1}},
+            {"$limit": limit},
+        ]
+        cursor = await self.collection.aggregate(pipeline)
+        return [str(row["_id"]) async for row in cursor]
+
+    async def category_counts(self, period: str) -> dict[str, int]:
+        """지정 월의 카테고리별 활성 민원 수를 집계한다."""
+        pipeline: list[dict[str, object]] = [
+            {
+                "$match": self._scoped(
+                    {"status": "active", "period": period, "categoryId": {"$type": "string"}}
+                )
+            },
+            {"$group": {"_id": "$categoryId", "count": {"$sum": 1}}},
+        ]
+        cursor = await self.collection.aggregate(pipeline)
+        counts: dict[str, int] = {}
+        async for row in cursor:
+            count = row.get("count")
+            if isinstance(count, int):
+                counts[str(row["_id"])] = count
+        return counts
+
+    async def count_active(self, query: dict[str, object]) -> int:
+        """추가 조건에 맞는 활성 민원 수를 센다."""
+        return await self.collection.count_documents(self._scoped({"status": "active", **query}))
+
     async def clear_candidates(self, candidate_ids: Sequence[ObjectId]) -> None:
         """지운 후보를 가리키던 민원의 candidateId를 비운다.
 
