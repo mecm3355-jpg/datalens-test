@@ -161,6 +161,9 @@ export function CategoriesPage() {
       ) : null}
       <section className="layout-main-side">
         <article className="card card-scroll">
+          {!loading && groups.length === 0 ? (
+            <p className="empty">아직 확정된 카테고리가 없습니다. 신규 후보 탭에서 후보를 승인하면 체계에 들어갑니다.</p>
+          ) : null}
           <div className="bar-list">
             {groups.map((group) => {
               const open = resolvedOpenGroup === group.group;

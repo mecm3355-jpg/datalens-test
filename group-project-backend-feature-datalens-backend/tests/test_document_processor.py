@@ -71,6 +71,7 @@ def test_profile_pdf_reports_missing_text_layer(tmp_path: Path) -> None:
         "pageCount": 3,
         "pagesWithoutText": 2,
         "lineCount": 1,
+        "wordCount": 1,
         "characterCount": 5,
     }
     [issue] = profile.quality.issues
@@ -101,6 +102,7 @@ def test_profile_docx(tmp_path: Path) -> None:
         "method": "text",
         "tableCount": 1,
         "lineCount": 3,
+        "wordCount": 6,
         "characterCount": 10,
     }
     assert profile.quality.issues == []

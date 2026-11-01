@@ -630,6 +630,7 @@ def profile_text(text: TextLines) -> Profile:
         text: open_text로 연 텍스트(lines를 이 함수가 끝까지 읽는다)
     """
     line_count = empty = duplicate = trailing = keyword_lines = checked_lines = keyword_chars = 0
+    characters = words = 0
     counts = dict.fromkeys(LOG_KEYWORDS, 0)
     keywords: Counter[str] = Counter()
     seen: set[int] = set()  # 줄 내용의 해시(메모리를 아끼려고 문자열 대신)
@@ -637,6 +638,8 @@ def profile_text(text: TextLines) -> Profile:
     for line in text.lines:
         line_count += 1
         stripped = line.strip()
+        characters += len(stripped)
+        words += len(stripped.split())
         # 빈 줄은 중복·핵심어 대상에서 뺀다(빈 줄끼리 중복으로 세지 않게)
         if not stripped:
             empty += 1
@@ -701,6 +704,8 @@ def profile_text(text: TextLines) -> Profile:
         "encoding": text.encoding,
         "lineCount": line_count,
         "emptyLineCount": empty,
+        "wordCount": words,
+        "characterCount": characters,
     }
     # 0건인 수준은 빼서 설계 파일 예시처럼 나온 수준만 보여 준다
     if is_log:
@@ -727,12 +732,13 @@ def profile_document(document: DocumentText) -> Profile:
     파라미터:
         document: open_document로 연 문서(lines를 이 함수가 끝까지 읽는다)
     """
-    line_count = characters = whitespace = duplicates = 0
+    line_count = characters = words = whitespace = duplicates = 0
     seen_lines: set[str] = set()
     # lines를 끝까지 읽어야 PDF 페이지별 글자 유무·OCR 집계가 document에 채워진다
     for line in document.lines:
         line_count += 1
         characters += len(line.strip())
+        words += len(line.split())
         # PDF/OCR 추출 결과는 단어 사이 공백이 여러 칸이거나 들여쓰기가 남을 수 있다.
         # 정규화한 값을 중복 키로 써, 공백만 다른 같은 문장도 중복으로 찾는다.
         # DOCX 표의 탭(칸 경계)은 유지하고 각 칸 안의 공백만 정규화한다.
@@ -851,5 +857,5 @@ def profile_document(document: DocumentText) -> Profile:
         analysis["pagesWithoutText"] = document.pages_without_text
     else:
         analysis["tableCount"] = document.table_count
-    analysis.update({"lineCount": line_count, "characterCount": characters})
+    analysis.update({"lineCount": line_count, "wordCount": words, "characterCount": characters})
     return Profile(QualityResult(issues=issues), analysis)

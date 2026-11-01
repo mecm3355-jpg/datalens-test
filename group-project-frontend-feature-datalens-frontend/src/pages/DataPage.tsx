@@ -111,8 +111,8 @@ export function DataPage() {
               ) : analysis.textStats ? (
                 <dl className="attr-grid">
                   <div className="attr"><dt>줄</dt><dd className="num">{formatNumber(analysis.textStats.lines)}</dd></div>
-                  <div className="attr"><dt>단어</dt><dd className="num">{formatNumber(analysis.textStats.words)}</dd></div>
-                  <div className="attr"><dt>문자</dt><dd className="num">{formatNumber(analysis.textStats.characters)}</dd></div>
+                  <div className="attr"><dt>단어</dt><dd className="num">{analysis.textStats.words === null ? "—" : formatNumber(analysis.textStats.words)}</dd></div>
+                  <div className="attr"><dt>문자</dt><dd className="num">{analysis.textStats.characters === null ? "—" : formatNumber(analysis.textStats.characters)}</dd></div>
                 </dl>
               ) : <p className="empty">이 파일에서 계산할 수치형 통계가 없습니다.</p>}
             </article>
