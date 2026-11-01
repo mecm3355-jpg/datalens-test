@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppError } from "../api/AppError";
 import {
   datalensApi,
@@ -57,6 +57,7 @@ export type ApiWorkspace = {
   error: string | null;
   dashboard: ApiDashboardSummary | null;
   addFiles: (files: File[], callbacks?: UploadLifecycleCallbacks) => Promise<UploadResult[]>;
+  uploadedSource: (fileId: string) => File | null;
   retryFileProcessing: (fileId: string) => Promise<void>;
   requestAnalysis: (fileId: string, options?: ComplaintAnalysisOptions) => Promise<void>;
   analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
@@ -213,6 +214,11 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     };
   }, [enabled, patchFile, pollJob, refreshDashboard]);
 
+  // 스캔 PDF를 브라우저에서 읽을 때 같은 파일을 다시 고르지 않게, 이 창에서 올린 원본을 기억한다.
+  // 서버는 원본을 내려주지 않으므로 새로고침하면 다시 골라야 한다
+  const uploadedSources = useRef(new Map<string, File>());
+  const uploadedSource = useCallback((fileId: string) => uploadedSources.current.get(fileId) ?? null, []);
+
   const addFiles = useCallback(async (
     selected: File[],
     callbacks?: UploadLifecycleCallbacks,
@@ -241,6 +247,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         patchFile(temporaryId, { status: "processing", uploadProgress: 5 });
         const uploaded = await datalensApi.upload(file);
         const serverFile = await datalensApi.getFile(uploaded.fileId);
+        uploadedSources.current.set(serverFile.fileId, file);
         setFiles((current) => current.map((item) =>
           item.id === temporaryId ? toDataFile(serverFile) : item,
         ));
@@ -355,6 +362,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     error,
     dashboard,
     addFiles,
+    uploadedSource,
     retryFileProcessing,
     requestAnalysis,
     analyzeOcrText,

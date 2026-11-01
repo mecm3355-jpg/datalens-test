@@ -452,12 +452,15 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
   scanned: boolean;
   diagnosisReady: boolean;
 }) {
-  const { requestAnalysis, analyzeOcrText } = useWorkspace();
+  const { requestAnalysis, analyzeOcrText, ensureFileData, uploadedSource } = useWorkspace();
   const navigate = useNavigate();
   const [scanSource, setScanSource] = useState<File | null>(null);
   const [ocrProgress, setOcrProgress] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const rememberedSource = uploadedSource(file.id);
+  const pdfSource = scanSource ?? rememberedSource;
   const isDocument = file.fileCategory === "document";
   // PDF는 여러 민원을 모아 인쇄한 경우가 많아, 파일 전체가 민원 1건으로 합쳐지지 않게 분리 규칙을 기본으로 둔다.
   // 브라우저 OCR로 만든 글자 파일도 내용은 PDF와 같다
@@ -466,19 +469,30 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
   );
   // 문서는 진단 결과가 와야 스캔본인지 안다. 그 전에 시작하면 스캔본을 서버로 보내 실패한다
   const waitingDiagnosis = isDocument && !diagnosisReady;
+  // 진단 결과 요청이 실패하면 기다려도 오지 않으므로 다시 불러올 길을 준다
+  const diagnosisFailed = waitingDiagnosis && !isReloading && Boolean(file.processingError);
   const canStart = !waitingDiagnosis
-    && (!scanned || scanSource !== null);
+    && (!scanned || pdfSource !== null);
+
+  const reloadDiagnosis = async () => {
+    setIsReloading(true);
+    try {
+      await ensureFileData(file.id);
+    } finally {
+      setIsReloading(false);
+    }
+  };
 
   const start = async () => {
     setIsRunning(true);
     setError(null);
     try {
-      if (scanned && scanSource) {
+      if (scanned && pdfSource) {
         // 서버는 원본을 내려주지 않으므로 같은 파일을 다시 고르게 하고, 다른 파일을 분석하지 않게 크기를 맞춰 본다
-        if (scanSource.size !== file.sizeBytes) {
+        if (pdfSource.size !== file.sizeBytes) {
           throw new Error("올린 PDF와 크기가 다른 파일입니다. 같은 파일을 선택해 주세요.");
         }
-        const text = await readScannedPdf(scanSource, (done, total) => {
+        const text = await readScannedPdf(pdfSource, (done, total) => {
           setOcrProgress(`글자 읽는 중 ${done}/${total}쪽`);
         });
         setOcrProgress("읽은 글자로 민원 분석 중");
@@ -515,7 +529,7 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
               <option value="">{isDocument ? "파일 전체를 민원 1건으로" : "빈 줄로 나눔"}</option>
             </select>
           </label>
-          {scanned ? (
+          {scanned && !rememberedSource ? (
             <label className="field">
               <span>원본 PDF 선택</span>
               <input
@@ -532,7 +546,19 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
           쪽수에 따라 몇 분 걸릴 수 있으니 창을 닫지 마세요.
         </p>
       ) : null}
-      {waitingDiagnosis ? <p className="caption" role="status">파일 진단 결과를 불러오는 중입니다.</p> : null}
+      {waitingDiagnosis && !diagnosisFailed ? <p className="caption" role="status">파일 진단 결과를 불러오는 중입니다.</p> : null}
+      {diagnosisFailed ? (
+        <div className="notice" role="alert">
+          <p className="feedback feedback-error">파일 진단 결과를 불러오지 못했습니다.</p>
+          <Button variant="secondary" onClick={() => void reloadDiagnosis()}>다시 불러오기</Button>
+        </div>
+      ) : null}
+      {complaintCount > 0 && !isRunning ? (
+        <div className="chips notice">
+          <Button variant="secondary" to="/complaints">민원 보기</Button>
+          <Button variant="secondary" to="/categories/candidates">신규 후보 보기</Button>
+        </div>
+      ) : null}
       {ocrProgress ? <p className="caption" role="status">{ocrProgress}</p> : null}
       {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
     </article>
