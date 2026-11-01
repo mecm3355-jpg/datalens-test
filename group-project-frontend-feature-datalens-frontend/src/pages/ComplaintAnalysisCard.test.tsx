@@ -9,8 +9,9 @@ const readScannedPdf = vi.hoisted(() => vi.fn());
 vi.mock("../lib/browserOcr", () => ({ readScannedPdf }));
 
 vi.mock("../state/workspace", () => ({ useWorkspace: useWorkspaceMock }));
+const complaintsMock = vi.hoisted(() => vi.fn((): Array<Record<string, unknown>> => []));
 vi.mock("../state/complaintData", () => ({
-  useComplaintData: () => ({ complaints: [] }),
+  useComplaintData: () => ({ complaints: complaintsMock() }),
 }));
 
 function workspace(requestAnalysis: ReturnType<typeof vi.fn>, columns = ["제목", "민원내용", "접수일"]) {
@@ -30,6 +31,7 @@ function workspace(requestAnalysis: ReturnType<typeof vi.fn>, columns = ["제목
     dataMode: "api",
     loading: false,
     ensureFileData: vi.fn(async () => undefined),
+    uploadedSource: vi.fn((): File | null => null),
     analysisRequested: vi.fn(() => false),
     requestAnalysis,
     reportForFile: vi.fn(() => null),
@@ -53,6 +55,7 @@ describe("민원 분석 카드", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    complaintsMock.mockReturnValue([]);
   });
 
   it("표 파일은 민원 분석 칸 대신 위쪽 버튼으로 시작한다", async () => {
@@ -115,6 +118,49 @@ describe("민원 분석 카드", () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(analyzeOcrText).toHaveBeenCalledWith("스캔.pdf", "번호 1", "sinmungo"));
+  });
+
+  it("이 창에서 올린 스캔 PDF는 다시 고르지 않고 바로 읽는다", async () => {
+    readScannedPdf.mockResolvedValue("번호 1");
+    const analyzeOcrText = vi.fn(async () => "file-2");
+    const source = new File(["abc"], "스캔.pdf", { type: "application/pdf" });
+    useWorkspaceMock.mockReturnValue({ ...scannedWorkspace(analyzeOcrText), uploadedSource: vi.fn(() => source) });
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: "민원 분석 시작" });
+    expect(screen.queryByLabelText("원본 PDF 선택")).toBeNull();
+    fireEvent.click(button);
+
+    await waitFor(() => expect(readScannedPdf).toHaveBeenCalledWith(source, expect.any(Function)));
+  });
+
+  it("진단 결과를 못 불러오면 다시 불러오기를 보여 준다", async () => {
+    const base = workspace(vi.fn(), []);
+    const ensureFileData = vi.fn(async () => undefined);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      ensureFileData,
+      files: [{ ...base.files[0], originalName: "민원.pdf", extension: "pdf", fileCategory: "document", processingError: "요청 실패" }],
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "다시 불러오기" }));
+
+    await waitFor(() => expect(ensureFileData).toHaveBeenCalledTimes(2));
+  });
+
+  it("분석이 끝나면 민원과 신규 후보로 가는 길을 보여 준다", async () => {
+    complaintsMock.mockReturnValue([{ id: "c1", fileId: "file-1", contentMasked: "횡단보도", receivedAt: "2026-10-21", assignStatus: "unassigned", categoryId: null, region: null, attributes: {}, sourceLocator: { row: 1 }, similarity: null }]);
+    const base = workspace(vi.fn(), []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      cleaningArtifact: vi.fn(() => ({ qualityIssues: [] })),
+      files: [{ ...base.files[0], originalName: "민원.pdf", extension: "pdf", fileCategory: "document" }],
+    });
+    renderPage();
+
+    expect((await screen.findByRole("link", { name: "민원 보기" })).getAttribute("href")).toBe("/complaints");
+    expect(screen.getByRole("link", { name: "신규 후보 보기" }).getAttribute("href")).toBe("/categories/candidates");
   });
 
   it("올린 PDF와 크기가 다른 파일은 읽지 않는다", async () => {

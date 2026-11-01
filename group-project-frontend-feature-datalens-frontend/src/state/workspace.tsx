@@ -64,6 +64,7 @@ type WorkspaceValue = {
   analysisRequested: (fileId: string) => boolean;
   requestAnalysis: (fileId: string, options?: ComplaintAnalysisOptions) => Promise<void>;
   analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
+  uploadedSource: (fileId: string) => File | null;
   reportForFile: (fileId: string) => DataReport | null;
   requestReport: (fileId: string) => Promise<void>;
   cleaningDecision: (fileId: string, ruleId: string) => CleaningDecision;
@@ -288,6 +289,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (DATA_MODE === "api") return api.analyzeOcrText(originalName, text, splitRule);
         throw new AppError("DEMO_NOT_SUPPORTED", "데모 모드에서는 스캔 PDF를 분석할 수 없습니다.");
       },
+      uploadedSource: (fileId) => (DATA_MODE === "api" ? api.uploadedSource(fileId) : null),
       reportForFile: (fileId) => DATA_MODE === "api" ? api.reports[fileId] ?? null : null,
       requestReport: (fileId) => DATA_MODE === "api"
         ? api.requestReport(fileId)

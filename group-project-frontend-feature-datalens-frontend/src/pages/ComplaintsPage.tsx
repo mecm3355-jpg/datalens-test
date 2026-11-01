@@ -53,7 +53,7 @@ export function ComplaintsPage() {
       <PageIntro
         eyebrow={priority ? "긴급 · 취약계층" : categoryName ?? "대표 민원"}
         title="민원"
-        lede="배정 상태, 긴급도, 카테고리로 대표 민원을 좁힙니다. 번호를 누르면 원문 위치와 속성 6종을 봅니다."
+        lede="배정 상태, 긴급도, 카테고리로 대표 민원을 좁힙니다. 내용을 누르면 원문 위치와 속성 6종을 봅니다."
       />
       {loading ? <p className="notice">민원 데이터를 불러오는 중입니다.</p> : null}
       {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
@@ -107,8 +107,8 @@ export function ComplaintsPage() {
             key: "id",
             header: "민원",
             render: (row) => (
-              <Link className="link" to={`/complaints/${row.id}`}>
-                {row.id}
+              <Link className="link content-cell" to={`/complaints/${row.id}`}>
+                {row.contentMasked}
               </Link>
             ),
           },
@@ -119,13 +119,8 @@ export function ComplaintsPage() {
             header: "카테고리",
             render: (row) => categoryById(row.categoryId)?.name ?? "미배정",
           },
-          { key: "assign", header: "배정", render: (row) => ASSIGN_LABEL[row.assignStatus] },
+          { key: "assign", header: "배정", render: (row) => <span className="nowrap">{ASSIGN_LABEL[row.assignStatus]}</span> },
           { key: "urgency", header: "긴급도", render: (row) => row.attributes.urgency ?? "—" },
-          {
-            key: "content",
-            header: "본문",
-            render: (row) => <span className="content-cell">{row.contentMasked}</span>,
-          },
         ]}
       />
       <p className="caption">{rows.length}건 표시</p>

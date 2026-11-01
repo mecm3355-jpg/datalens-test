@@ -547,6 +547,11 @@ td.num {
   padding: var(--space-lg) 0;
 }
 
+.table-scroll th,
+.nowrap {
+  white-space: nowrap;
+}
+
 .content-cell {
   max-width: 420px;
   color: var(--color-body);
@@ -1617,7 +1622,12 @@ td.num {
     flex-direction: column;
   }
 
-  .content-cell {
+  .table-scroll th,
+.nowrap {
+  white-space: nowrap;
+}
+
+.content-cell {
     max-width: none;
   }
 
