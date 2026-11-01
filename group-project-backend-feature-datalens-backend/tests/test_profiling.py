@@ -184,6 +184,8 @@ def test_profile_log_matches_schema_example_shape() -> None:
         "encoding": "utf-8",
         "lineCount": 7,
         "emptyLineCount": 2,
+        "wordCount": 10,
+        "characterCount": 50,
         "keywordCounts": {"ERROR": 1, "WARN": 2, "INFO": 1},
     }
     assert profile.quality.score is None

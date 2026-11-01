@@ -82,7 +82,7 @@ export type FileAnalysis = {
   quality: QualityProfile | null;
   numericSummaries: NumericSummary[];
   frequencies: FrequencyItem[];
-  textStats: { lines: number; words: number; characters: number } | null;
+  textStats: { lines: number; words: number | null; characters: number | null } | null;
   imageMetadata: { width: number | null; height: number | null } | null;
   thumbnail: string | null;
 };

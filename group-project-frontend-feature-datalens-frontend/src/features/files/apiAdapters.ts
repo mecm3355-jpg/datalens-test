@@ -208,12 +208,16 @@ export function toArtifact(
   const lineCount = typeof analysis.analysis.lineCount === "number"
     ? analysis.analysis.lineCount
     : preview.lines?.length;
+  // 미리보기는 앞부분뿐이라, 잘렸으면 전체 수로 보이지 않게 서버 값이 없을 때 비워 둔다
+  const previewText = preview.lines && preview.lines.length < preview.limit ? preview.lines : null;
   const characterCount = typeof analysis.analysis.characterCount === "number"
     ? analysis.analysis.characterCount
-    : preview.lines?.join("\n").length;
-  const words = (preview.lines ?? []).join(" ").trim().split(/\s+/).filter(Boolean).length;
-  const textStats = imageMetadata === null && lineCount !== undefined && characterCount !== undefined
-    ? { lines: lineCount, words, characters: characterCount }
+    : previewText?.join("\n").length ?? null;
+  const wordCount = typeof analysis.analysis.wordCount === "number"
+    ? analysis.analysis.wordCount
+    : previewText?.join(" ").trim().split(/\s+/).filter(Boolean).length ?? null;
+  const textStats = imageMetadata === null && lineCount !== undefined
+    ? { lines: lineCount, words: wordCount, characters: characterCount }
     : null;
   return {
     // API 미리보기의 text 줄도 서버가 실제로 추출한 내용이다. metadata로 표시하면

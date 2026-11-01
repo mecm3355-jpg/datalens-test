@@ -116,13 +116,22 @@ describe("파일 API 화면 변환", () => {
     };
     const textAnalysis: ApiAnalysis = {
       ...analysis,
-      analysis: { lineCount: 2, characterCount: 18 },
+      analysis: { lineCount: 2, wordCount: 6, characterCount: 18 },
     };
 
     expect(toArtifact(textPreview, textAnalysis, []).analysis?.textStats).toEqual({
       lines: 2,
       words: 6,
       characters: 18,
+    });
+
+    // 서버 값이 없는 예전 결과에서 잘린 미리보기를 전체 수처럼 보여 주지 않는다
+    const oldAnalysis: ApiAnalysis = { ...analysis, analysis: { lineCount: 500 } };
+    const cutPreview: ApiPreview = { ...textPreview, limit: 2 };
+    expect(toArtifact(cutPreview, oldAnalysis, []).analysis?.textStats).toEqual({
+      lines: 500,
+      words: null,
+      characters: null,
     });
   });
 

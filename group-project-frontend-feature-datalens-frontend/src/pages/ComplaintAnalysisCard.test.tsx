@@ -64,6 +64,18 @@ describe("민원 분석 카드", () => {
     expect(screen.queryByLabelText("원본 PDF 선택")).toBeNull();
   });
 
+  it("대기 중인 텍스트 파일에는 규칙 없이 시작하는 위쪽 버튼을 보여 주지 않는다", async () => {
+    const base = workspace(vi.fn(), []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      files: [{ ...base.files[0], originalName: "민원.pdf.ocr.txt", extension: "txt", fileCategory: "text", status: "queued" }],
+    });
+    renderPage();
+
+    await screen.findByRole("button", { name: "파일 삭제" });
+    expect(screen.queryByRole("button", { name: /민원 분석 실행|민원 다시 분석/ })).toBeNull();
+  });
+
   it("PDF는 기본으로 국민신문고 규칙으로 나눠 분석한다", async () => {
     const start = vi.fn(async () => undefined);
     const base = workspace(start, []);

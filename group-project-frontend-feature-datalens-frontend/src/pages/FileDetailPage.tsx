@@ -190,7 +190,8 @@ function FileDetail({ fileId }: { fileId: string }) {
             {file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? (
               <Button variant="secondary" to={`/files/${file.id}/cleaning`}>정제 결과</Button>
             ) : null}
-            {!analysisUnsupported && (file.fileCategory === "tabular" || file.status !== "completed") ? <Button
+            {/* 문서·텍스트는 나누기 규칙을 고르는 민원 분석 카드에서만 시작한다. 여기서 시작하면 규칙이 빠진다 */}
+            {!analysisUnsupported && (file.fileCategory === "tabular" || file.status === "failed" || file.status === "processing") ? <Button
               onClick={() => {
                 if (file.status === "failed") {
                   void retryProcessing();
@@ -313,8 +314,8 @@ function FileDetail({ fileId }: { fileId: string }) {
             ) : analysis.textStats ? (
               <dl className="attr-grid notice">
                 <div className="attr"><dt>줄</dt><dd className="num">{formatNumber(analysis.textStats.lines)}</dd></div>
-                <div className="attr"><dt>단어</dt><dd className="num">{formatNumber(analysis.textStats.words)}</dd></div>
-                <div className="attr"><dt>문자</dt><dd className="num">{formatNumber(analysis.textStats.characters)}</dd></div>
+                <div className="attr"><dt>단어</dt><dd className="num">{analysis.textStats.words === null ? "—" : formatNumber(analysis.textStats.words)}</dd></div>
+                <div className="attr"><dt>문자</dt><dd className="num">{analysis.textStats.characters === null ? "—" : formatNumber(analysis.textStats.characters)}</dd></div>
               </dl>
             ) : analysis.imageMetadata ? (
               <p className="body">이미지 해상도: <span className="num">{analysis.imageMetadata.width ?? "—"} × {analysis.imageMetadata.height ?? "—"}</span></p>
