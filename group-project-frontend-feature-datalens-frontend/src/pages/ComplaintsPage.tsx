@@ -1,23 +1,16 @@
-import { Link, useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router-dom";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
+import { isPriority, useCatalog } from "../state/catalog";
 import { formatDate } from "../lib/format";
 import { ASSIGN_LABEL } from "../lib/labels";
-import { useComplaintData } from "../state/complaintData";
-import type { AssignStatus, Complaint, Urgency } from "../types";
+import type { AssignStatus, Urgency } from "../types";
 
 const STATUSES: Array<AssignStatus | "all"> = ["all", "auto", "ambiguous", "unassigned", "confirmed"];
 const URGENCIES: Array<Urgency | "all"> = ["all", "긴급", "높음", "보통", "낮음"];
 
-function isPriority(item: Complaint): boolean {
-  return item.attributes.urgency === "긴급"
-    || item.attributes.affected === "어린이"
-    || item.attributes.affected === "노인"
-    || item.attributes.affected === "장애인";
-}
-
 export function ComplaintsPage() {
-  const { complaints, categoryById, loading, error } = useComplaintData();
+  const { complaints, categoryById } = useCatalog();
   const [params, setParams] = useSearchParams();
   const status = params.get("status") ?? "all";
   const urgency = params.get("urgency") ?? "all";
@@ -53,10 +46,8 @@ export function ComplaintsPage() {
       <PageIntro
         eyebrow={priority ? "긴급 · 취약계층" : categoryName ?? "대표 민원"}
         title="민원"
-        lede="배정 상태, 긴급도, 카테고리로 대표 민원을 좁힙니다. 내용을 누르면 원문 위치와 속성 6종을 봅니다."
+        lede="배정 상태, 긴급도, 카테고리로 대표 민원을 좁힙니다. 번호를 누르면 원문 위치와 속성 6종을 봅니다."
       />
-      {loading ? <p className="notice">민원 데이터를 불러오는 중입니다.</p> : null}
-      {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
       <div className="filter-bar">
         {categoryName ? (
           <button type="button" className="chip-btn is-active" onClick={() => update({ category: "" })}>
@@ -107,8 +98,8 @@ export function ComplaintsPage() {
             key: "id",
             header: "민원",
             render: (row) => (
-              <Link className="link content-cell" to={`/complaints/${row.id}`}>
-                {row.contentMasked}
+              <Link className="link" to={`/complaints/${row.id}`}>
+                {row.id}
               </Link>
             ),
           },
@@ -119,8 +110,13 @@ export function ComplaintsPage() {
             header: "카테고리",
             render: (row) => categoryById(row.categoryId)?.name ?? "미배정",
           },
-          { key: "assign", header: "배정", render: (row) => <span className="nowrap">{ASSIGN_LABEL[row.assignStatus]}</span> },
+          { key: "assign", header: "배정", render: (row) => ASSIGN_LABEL[row.assignStatus] },
           { key: "urgency", header: "긴급도", render: (row) => row.attributes.urgency ?? "—" },
+          {
+            key: "content",
+            header: "본문",
+            render: (row) => <span className="content-cell">{row.contentMasked}</span>,
+          },
         ]}
       />
       <p className="caption">{rows.length}건 표시</p>

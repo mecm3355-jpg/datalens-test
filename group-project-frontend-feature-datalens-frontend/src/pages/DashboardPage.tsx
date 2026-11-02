@@ -1,128 +1,184 @@
-import { lazy, Suspense } from "react";
-import { Link } from "react-router";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
-import { PageIntro } from "../components/PageIntro";
+import { formatDate } from "../lib/format";
 import { FILE_STATUS_LABEL } from "../lib/labels";
-import { formatBytes, formatDate, formatNumber } from "../lib/format";
-import type { ApiComplaintStats, ApiLabelCount } from "../api/datalens";
-import { useComplaintData } from "../state/complaintData";
-import { useWorkspace } from "../state/workspace";
-import type { FileStatus } from "../types";
+import { useCatalog } from "../state/catalog";
+import type { Category, Complaint, DataFile } from "../types";
 
-const STATUS_ORDER: FileStatus[] = ["completed", "processing", "queued", "failed"];
-const StatusChart = lazy(() => import("../components/StatusChart").then((module) => ({ default: module.StatusChart })));
+const ACCEPT = ".csv,.tsv,.xlsx,.xls,.docx,.pdf,.txt,.jpg,.jpeg,.png,.hwpx,.hwp";
+const RECENT_LIMIT = 5;
+
+/** 파일의 카테고리 상태: 민원 없음, 미분류, 하나로 정리됨, 여러 카테고리. */
+type FileCategoryState =
+  | { kind: "empty" }
+  | { kind: "unassigned" }
+  | { kind: "single"; categoryId: string }
+  | { kind: "mixed"; count: number };
+
+function byNewest(a: DataFile, b: DataFile): number {
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
+/**
+ * 서버에 저장된 민원 배정으로 파일의 카테고리 상태를 구합니다.
+ * @param complaints 그 파일의 민원
+ */
+function fileCategoryOf(complaints: Complaint[]): FileCategoryState {
+  if (complaints.length === 0) return { kind: "empty" };
+  const ids = new Set(complaints.map((item) => item.categoryId).filter((id): id is string => id !== null));
+  if (ids.size === 0) return { kind: "unassigned" };
+  const assignedAll = complaints.every((item) => item.categoryId !== null);
+  if (ids.size === 1 && assignedAll) return { kind: "single", categoryId: [...ids][0] };
+  return { kind: "mixed", count: ids.size };
+}
 
 export function DashboardPage() {
-  const workspace = useWorkspace();
-  const { stats } = useComplaintData();
-  const serverSummary = workspace.dashboardSummary;
-  const statusCounts = Object.fromEntries(
-    STATUS_ORDER.map((status) => [status, workspace.files.filter((file) => file.status === status).length]),
-  ) as Record<FileStatus, number>;
-  const qualityRows = workspace.files.flatMap((file) => {
-    const profile = workspace.cleaningArtifact(file.id)?.analysis?.quality;
-    return profile ? [{ file, profile }] : [];
-  });
-  const localAverageQuality = qualityRows.length > 0
-    ? Math.round(qualityRows.reduce((sum, row) => sum + row.profile.score, 0) / qualityRows.length)
-    : null;
-  const averageQuality = serverSummary?.quality.averageScore ?? localAverageQuality;
-  const totalFiles = workspace.files.length;
-  const recentFiles = [...workspace.files]
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .slice(0, 6);
-  const statusChartData = STATUS_ORDER.map((status) => ({ label: FILE_STATUS_LABEL[status], count: statusCounts[status] }));
+  const { files, categories, uploadFiles, assignFileCategory, complaintsByFile, status, busy, error } = useCatalog();
+  const [targetId, setTargetId] = useState<string | null>(null);
+  const sorted = useMemo(() => [...files].sort(byNewest), [files]);
+  const target = sorted.find((file) => file.id === targetId) ?? sorted[0] ?? null;
+  const recent = sorted.slice(0, RECENT_LIMIT);
+  const targetState = target ? fileCategoryOf(complaintsByFile(target.id)) : null;
+  const selected = targetState?.kind === "single" ? targetState.categoryId : "";
+  const groups = groupCategories(categories);
+  const canChoose = target !== null && categories.length > 0 && targetState?.kind !== "empty";
 
   return (
     <div className="page">
-      <PageIntro
-        size="md"
-        eyebrow="데이터 품질 작업공간"
-        title="파일과 품질 상태를 한눈에"
-        lede="파일 수집부터 형식 검증, 품질 진단, 규칙 승인, 정제 결과 비교와 다운로드까지 한 흐름으로 관리합니다."
-        actions={
-          <>
-            <Button variant="pill" to="/files">파일 업로드</Button>
-            <Button variant="secondary" to="/data">분석 리포트</Button>
-          </>
-        }
-      />
-
-      <section className="stat-row" aria-label="파일 처리 현황">
-        <DashboardStat label="전체 파일" value={formatNumber(totalFiles)} foot="등록된 원본" />
-        <DashboardStat label="완료" value={formatNumber(statusCounts.completed)} foot="분석 가능" />
-        <DashboardStat label="처리 중" value={formatNumber(statusCounts.processing + statusCounts.queued)} foot="대기 포함" />
-        <DashboardStat label="실패" value={formatNumber(statusCounts.failed)} foot="재시도 필요" />
-        <DashboardStat label="평균 품질" value={averageQuality === null ? "—" : `${averageQuality}점`} foot="분석 완료 파일" />
+      <section className="upload-hero" aria-labelledby="dash-upload">
+        <div className="upload-hero-copy">
+          <p className="upload-hero-kicker">데이터 수집·정제·분석</p>
+          <h2 id="dash-upload">파일 품질을 진단하고 정제합니다</h2>
+          <p>
+            파일을 올리면 형식을 검증하고, 누락값·중복·형식 오류를 진단합니다. 승인한 규칙으로 정제한
+            결과를 비교하고 AI 리포트를 확인합니다.
+          </p>
+        </div>
+        <div className="upload-hero-actions">
+          <label className="btn btn-pill upload-hero-upload">
+            <input
+              className="upload-input"
+              type="file"
+              multiple
+              accept={ACCEPT}
+              disabled={busy}
+              onChange={(event) => {
+                const picked = event.target.files;
+                if (!picked || picked.length === 0) return;
+                const list = [...picked];
+                event.target.value = "";
+                void uploadFiles(list).then((ids) => {
+                  const newest = ids.at(-1);
+                  if (newest) setTargetId(newest);
+                });
+              }}
+            />
+            파일 업로드
+          </label>
+          <Link className="btn upload-hero-report" to={target ? `/files/${target.id}` : "/files"}>
+            분석 리포트
+          </Link>
+        </div>
       </section>
 
-      {workspace.dataMode === "api" && stats ? <ComplaintOverview stats={stats} /> : null}
-
-      <section className="split">
-        <article className="card">
-          <div className="card-head">
-            <div><h2 className="title-sm">최근 파일</h2><p className="caption">파일별 처리 상태와 분석 지원 여부</p></div>
-            <Link className="link" to="/files">전체 파일</Link>
-          </div>
-          <DataTable
-            framed={false}
-            rows={recentFiles}
-            rowKey={(file) => file.id}
-            empty="업로드한 파일이 없습니다."
-            columns={[
-              { key: "name", header: "파일", render: (file) => <Link className="link file-name-link" to={`/files/${file.id}`}>{file.originalName}</Link> },
-              { key: "format", header: "형식", render: (file) => file.extension.toUpperCase() },
-              { key: "size", header: "크기", numeric: true, render: (file) => formatBytes(file.sizeBytes) },
-              { key: "status", header: "상태", render: (file) => <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span> },
-              { key: "date", header: "등록일", numeric: true, render: (file) => formatDate(file.createdAt) },
-            ]}
-          />
-        </article>
-
-        <article className="card">
-          <div className="card-head"><h2 className="title-sm">처리 상태 분포</h2></div>
-          <Suspense fallback={<div className="chart-placeholder">차트를 불러오는 중입니다.</div>}>
-            <StatusChart data={statusChartData} />
-          </Suspense>
-          <ul className="status-distribution">
-            {STATUS_ORDER.map((status) => {
-              const count = statusCounts[status];
-              const percentage = totalFiles === 0 ? 0 : (count / totalFiles) * 100;
-              return (
-                <li key={status}>
-                  <div className="status-distribution-label"><span>{FILE_STATUS_LABEL[status]}</span><span className="num">{formatNumber(count)}</span></div>
-                  <div className="quality-track" aria-label={`${FILE_STATUS_LABEL[status]} ${percentage.toFixed(0)}%`}><span style={{ width: `${percentage}%` }} /></div>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="notice">
-            <p className="caption">{workspace.dataMode === "api" ? "서버 처리 범위" : "데모 처리 범위"}</p>
-            <p className="body">CSV·JSON·TXT·LOG는 내용과 기본 통계를 분석하고, JPG·PNG는 실제 형식과 해상도를 확인합니다.</p>
-          </div>
-        </article>
-      </section>
-
-      <section className="card">
+      <section className="card" aria-labelledby="dash-category">
         <div className="card-head">
-          <div><h2 className="title-sm">파일별 품질 지표</h2><p className="caption">완전성 35% · 유일성 25% · 유효성 20% · 일관성 20%</p></div>
-          <Link className="link" to="/data">분석 상세</Link>
+          <h2 id="dash-category" className="title-sm">
+            카테고리
+          </h2>
+        </div>
+        <div className="stack">
+          <p className="body">
+            대상 파일 <span className="num">{target?.originalName ?? "올린 파일이 없습니다"}</span>
+          </p>
+          <label className="field">
+            <span>DB 카테고리</span>
+            <select
+              className="select"
+              value={selected}
+              disabled={busy || !canChoose}
+              onChange={(event) => {
+                const categoryId = event.target.value;
+                if (target && categoryId) void assignFileCategory(target.id, categoryId);
+              }}
+            >
+              <option value="" disabled>
+                {targetState?.kind === "mixed" ? `여러 카테고리 (${targetState.count}개)` : "카테고리 선택"}
+              </option>
+              {groups.map((group) => (
+                <optgroup key={group.name} label={group.name}>
+                  {group.items.map((category) => (
+                    <option key={category.categoryId} value={category.categoryId}>
+                      {category.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          {sorted.length > 1 ? (
+            <label className="field">
+              <span>다른 파일</span>
+              <select className="select" value={target?.id ?? ""} onChange={(event) => setTargetId(event.target.value)}>
+                {sorted.map((file) => (
+                  <option key={file.id} value={file.id}>
+                    {file.originalName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <p className="caption">{categoryHint(target, targetState, categories.length)}</p>
+          {categories.length === 0 ? (
+            <Link className="link" to="/categories/candidates">
+              신규 후보 승인하러 가기
+            </Link>
+          ) : null}
+          {error ? (
+            <p className="feedback feedback-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="card" aria-labelledby="dash-files">
+        <div className="card-head">
+          <h2 id="dash-files" className="title-sm">
+            최근 파일
+          </h2>
+          <Button variant="secondary" to="/files">
+            더보기
+          </Button>
         </div>
         <DataTable
           framed={false}
-          rows={qualityRows}
-          rowKey={(row) => row.file.id}
-          empty={workspace.dataMode === "api"
-            ? "파일 상세에서 분석 결과를 열면 파일별 품질 지표가 표시됩니다. 전체 평균은 서버 집계를 사용합니다."
-            : "브라우저에서 새 CSV 또는 JSON 파일을 업로드하면 품질 지표가 표시됩니다."}
+          rows={recent}
+          rowKey={(file) => file.id}
+          empty={status === "loading" ? "파일 목록을 불러오는 중입니다." : "올린 파일이 없습니다."}
           columns={[
-            { key: "file", header: "파일", render: (row) => <Link className="link" to={`/files/${row.file.id}`}>{row.file.originalName}</Link> },
-            { key: "score", header: "종합", numeric: true, render: (row) => `${row.profile.score}점` },
-            { key: "complete", header: "완전성", numeric: true, render: (row) => `${row.profile.completeness}%` },
-            { key: "unique", header: "유일성", numeric: true, render: (row) => `${row.profile.uniqueness}%` },
-            { key: "valid", header: "유효성", numeric: true, render: (row) => `${row.profile.validity}%` },
-            { key: "consistent", header: "일관성", numeric: true, render: (row) => `${row.profile.consistency}%` },
+            {
+              key: "name",
+              header: "파일",
+              render: (file) => (
+                <Link className="link" to={`/files/${file.id}`}>
+                  {file.originalName}
+                </Link>
+              ),
+            },
+            {
+              key: "category",
+              header: "카테고리",
+              render: (file) => categoryLabel(categories, fileCategoryOf(complaintsByFile(file.id))),
+            },
+            {
+              key: "status",
+              header: "상태",
+              render: (file) => <span className="pill">{FILE_STATUS_LABEL[file.status]}</span>,
+            },
+            { key: "date", header: "올린 날", numeric: true, render: (file) => formatDate(file.createdAt) },
           ]}
         />
       </section>
@@ -130,96 +186,46 @@ export function DashboardPage() {
   );
 }
 
-/**
- * 서버가 집계한 민원 분류 현황을 보여 줍니다. 승인된 카테고리가 없는 첫 달에도
- * 승인 대기 후보(임시 분류)로 무엇이 모였는지 보이고, 승인·검토 화면으로 이어집니다.
- */
-function ComplaintOverview({ stats }: { stats: ApiComplaintStats }) {
-  if (stats.total === 0) {
-    return (
-      <section className="card" aria-label="민원 분류 현황">
-        <div className="card-head"><h2 className="title-sm">민원 분류 현황</h2></div>
-        <p className="body">아직 분석된 민원이 없습니다. 민원 CSV·XLSX를 올리면 진단 뒤 자동으로 분류합니다.</p>
-      </section>
-    );
+function groupCategories(categories: Category[]): Array<{ name: string; items: Category[] }> {
+  const map = new Map<string, Category[]>();
+  for (const category of categories) {
+    const items = map.get(category.group) ?? [];
+    items.push(category);
+    map.set(category.group, items);
   }
-  const { assignment } = stats;
-  const assigned = assignment.auto + assignment.confirmed;
-  return (
-    <>
-      <section className="stat-row" aria-label="민원 분류 현황">
-        <DashboardStat label="전체 민원" value={formatNumber(stats.total)} foot={stats.period ?? "전체 기간"} />
-        <DashboardStat label="자동 배정" value={formatNumber(assignment.auto)} foot="기존 카테고리" />
-        <DashboardStat label="사람 확정" value={formatNumber(assignment.confirmed)} foot="검토 완료" />
-        <DashboardStat label="애매" value={formatNumber(assignment.ambiguous)} foot="검토 필요" />
-        <DashboardStat label="미배정" value={formatNumber(assignment.unassigned)} foot="후보 승인 대기" />
-      </section>
-
-      <section className="split">
-        <article className="card">
-          <div className="card-head">
-            <div>
-              <h2 className="title-sm">승인 대기 후보</h2>
-              <p className="caption">
-                후보 {formatNumber(stats.pendingCandidateCount)}개 · 민원 {formatNumber(stats.pendingCandidateComplaints)}건
-              </p>
-            </div>
-            <Link className="link" to="/categories/candidates">후보 승인</Link>
-          </div>
-          {assigned === 0 && stats.pendingCandidateCount > 0 ? (
-            <p className="body notice">아직 승인된 카테고리가 없습니다. 후보를 승인하면 묶인 민원이 그 카테고리로 배정됩니다.</p>
-          ) : null}
-          <DataTable
-            framed={false}
-            rows={stats.pendingCandidates}
-            rowKey={(candidate) => candidate.candidateId}
-            empty="승인을 기다리는 후보가 없습니다."
-            columns={[
-              { key: "name", header: "제안 이름", render: (candidate) => candidate.suggestedName },
-              { key: "group", header: "그룹", render: (candidate) => candidate.suggestedGroup ?? "—" },
-              { key: "size", header: "민원", numeric: true, render: (candidate) => formatNumber(candidate.size) },
-              { key: "keywords", header: "핵심어", render: (candidate) => candidate.keywords.slice(0, 3).join(", ") },
-            ]}
-          />
-        </article>
-
-        <article className="card">
-          <div className="card-head">
-            <div><h2 className="title-sm">분포</h2><p className="caption">배정된 민원의 상위 그룹, 전체 민원의 긴급도·지역</p></div>
-            <Link className="link" to="/reviews">검토 대기 {formatNumber(stats.pendingReviews)}건</Link>
-          </div>
-          <CountBars title="상위 그룹" items={stats.groups.filter((item) => item.label !== null)} total={assigned} />
-          <CountBars title="긴급도" items={stats.urgency} total={stats.total} />
-          <CountBars title="지역" items={stats.regions.slice(0, 5)} total={stats.total} />
-        </article>
-      </section>
-    </>
-  );
+  return [...map.entries()].map(([name, items]) => ({
+    name,
+    items: [...items].sort((a, b) => a.name.localeCompare(b.name, "ko")),
+  }));
 }
 
-/** 값별 건수를 막대 목록으로 보여 줍니다. 값이 없는 항목은 "미상"으로 표시합니다. */
-function CountBars({ title, items, total }: { title: string; items: ApiLabelCount[]; total: number }) {
-  if (items.length === 0) return null;
-  return (
-    <div className="notice">
-      <p className="caption">{title}</p>
-      <ul className="status-distribution">
-        {items.map((item) => {
-          const label = item.label ?? "미상";
-          const percentage = total === 0 ? 0 : (item.count / total) * 100;
-          return (
-            <li key={label}>
-              <div className="status-distribution-label"><span>{label}</span><span className="num">{formatNumber(item.count)}</span></div>
-              <div className="quality-track" aria-label={`${label} ${percentage.toFixed(0)}%`}><span style={{ width: `${percentage}%` }} /></div>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
+/**
+ * 최근 파일 표의 카테고리 칸 문구입니다.
+ * @param categories 현재 체계의 카테고리
+ * @param state 파일의 카테고리 상태
+ */
+function categoryLabel(categories: Category[], state: FileCategoryState): string {
+  switch (state.kind) {
+    case "empty":
+      return "—";
+    case "unassigned":
+      return "미분류";
+    case "mixed":
+      return `여러 카테고리 (${state.count}개)`;
+    case "single":
+      return categories.find((category) => category.categoryId === state.categoryId)?.name ?? "—";
+  }
 }
 
-/** 대시보드 핵심 지표의 이름, 값, 보조 설명을 표시합니다. */
-function DashboardStat({ label, value, foot }: { label: string; value: string; foot: string }) {
-  return <article className="stat"><p className="stat-label">{label}</p><p className="stat-value">{value}</p><p className="stat-foot">{foot}</p></article>;
+/**
+ * 카테고리 선택 칸 아래 안내 문구입니다. 고를 수 없을 때는 그 이유를 알려 줍니다.
+ * @param target 대상 파일
+ * @param state 대상 파일의 카테고리 상태
+ * @param categoryCount 현재 체계의 카테고리 수
+ */
+function categoryHint(target: DataFile | null, state: FileCategoryState | null, categoryCount: number): string {
+  if (!target) return "파일을 올리면 민원을 자동으로 분석하고, 여기서 파일의 카테고리를 정할 수 있습니다.";
+  if (categoryCount === 0) return "승인된 카테고리가 아직 없습니다. 분석으로 생긴 신규 후보를 승인하면 고를 수 있습니다.";
+  if (state?.kind === "empty") return "이 파일은 아직 분석된 민원이 없습니다. 자동 분석이 끝나면 고를 수 있습니다.";
+  return "고르면 이 파일의 민원 전체를 그 카테고리로 확정해 서버에 저장합니다(관리자만).";
 }

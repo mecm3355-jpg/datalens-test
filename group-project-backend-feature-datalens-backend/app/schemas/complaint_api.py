@@ -318,3 +318,20 @@ class ReviewDecisionRequest(ApiModel):
     # CAT-0012 형식 ID라 길이를 짧게 제한한다
     category_id: str | None = Field(default=None, max_length=20)
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class FileCategoryRequest(ApiModel):
+    """POST /files/{file_id}/category 요청: 파일의 민원 전체를 이 카테고리로 확정한다."""
+
+    # CAT-0012 형식 ID라 길이를 짧게 제한한다
+    category_id: str = Field(min_length=1, max_length=20)
+
+
+class FileCategoryResult(ApiModel):
+    """POST /files/{file_id}/category 응답."""
+
+    file_id: str
+    category_id: str
+    # 카테고리를 확정한 민원 수와, 그 때문에 끝난 검토 대기 수
+    updated_count: int
+    reviews_closed: int
