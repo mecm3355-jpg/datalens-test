@@ -11,7 +11,13 @@ const jobs = vi.hoisted(() => new Map<string, Job>());
 
 vi.mock("../state/progress", () => ({ useProgress: () => ({ items: state.items, update }) }));
 vi.mock("../state/catalog", () => ({ useCatalog: () => state.catalog }));
-vi.mock("../lib/remote", () => ({ loadJob: vi.fn(async (id: string) => jobs.get(id)) }));
+const quality = vi.hoisted(() => ({ issues: [] as Array<{ type: string }> }));
+const readScanned = vi.hoisted(() => vi.fn(async () => undefined));
+const hasSource = vi.hoisted(() => ({ value: true }));
+vi.mock("../lib/remote", () => ({
+  loadJob: vi.fn(async (id: string) => jobs.get(id)),
+  loadQuality: vi.fn(async () => quality.issues),
+}));
 
 function item(patch: Partial<ProgressItem>): ProgressItem {
   return {
@@ -23,6 +29,8 @@ function item(patch: Partial<ProgressItem>): ProgressItem {
     percent: null,
     ignoreJobId: null,
     waitingSince: null,
+    scanned: false,
+    scanChecked: false,
     ...patch,
   };
 }
@@ -31,13 +39,13 @@ function job(id: string, type: string, status: Job["status"], progress: number):
   return { id, fileId: "f1", type, status, progress, stage: "", error: null };
 }
 
-function setServer(status: DataFile["status"], last: Job, complaints = 0) {
+function setServer(status: DataFile["status"], last: Job, complaints = 0, extension = "csv") {
   jobs.set(last.id, last);
   const file: DataFile = {
     id: "f1",
     originalName: "민원.csv",
-    extension: "csv",
-    fileCategory: "tabular",
+    extension,
+    fileCategory: extension === "pdf" ? "document" : "tabular",
     sizeBytes: 10,
     status,
     createdAt: "2026-11-02T00:00:00Z",
@@ -50,6 +58,8 @@ function setServer(status: DataFile["status"], last: Job, complaints = 0) {
     files: [file],
     complaintsByFile: () => Array.from({ length: complaints }),
     candidates: [{ id: "c1", decision: "pending" }],
+    hasSource: () => hasSource.value,
+    readScanned,
   };
 }
 
@@ -63,6 +73,9 @@ async function flush() {
 describe("진행 감시", () => {
   beforeEach(() => {
     update.mockClear();
+    readScanned.mockClear();
+    quality.issues = [];
+    hasSource.value = true;
   });
 
   it("서버 작업 진행률과 단계를 진행 팝업에 반영한다", async () => {
@@ -94,5 +107,30 @@ describe("진행 감시", () => {
     await flush();
 
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("글자 없는 스캔 PDF는 기다리지 않고 바로 브라우저 글자 읽기를 시작한다", async () => {
+    state.items = [item({})];
+    quality.issues = [{ type: "no_text_layer" }];
+    setServer("completed", job("j1", "analyze", "completed", 100), 0, "pdf");
+    render(<ProgressWatcher />);
+    await flush();
+
+    expect(update).toHaveBeenCalledWith("p1", expect.objectContaining({ scanned: true, step: "ocr" }));
+    expect(readScanned).toHaveBeenCalledWith("p1", "f1");
+  });
+
+  it("원본이 이 창에 없는 스캔본은 다시 고르라고 안내하고 멈춘다", async () => {
+    state.items = [item({})];
+    quality.issues = [{ type: "no_text_layer" }];
+    hasSource.value = false;
+    setServer("completed", job("j1", "analyze", "completed", 100), 0, "pdf");
+    render(<ProgressWatcher />);
+    await flush();
+
+    const [, patch] = update.mock.calls[0] as [string, { step: string; detail: string }];
+    expect(patch.step).toBe("stopped");
+    expect(patch.detail).toContain("원본 PDF를 다시 고르면");
+    expect(readScanned).not.toHaveBeenCalled();
   });
 });

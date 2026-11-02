@@ -7,6 +7,7 @@ import { formatBytes, formatDate, formatNumber, formatRatio } from "../lib/forma
 import { FILE_STATUS_LABEL, MAPPING_FIELDS, SEVERITY_LABEL } from "../lib/labels";
 import { loadJob, loadMapping, loadPreview, loadQuality } from "../lib/remote";
 import { useCatalog } from "../state/catalog";
+import { useProgress } from "../state/progress";
 import type { DataFile, Job, JobStatus, MappingField, QualityIssue } from "../types";
 
 const STAGES: Array<{ id: string; label: string }> = [
@@ -209,6 +210,10 @@ function FileDetail({ fileId }: { fileId: string }) {
         </p>
       ) : null}
 
+      {quality.some((issue) => issue.type === "no_text_layer") && preview.length === 0 ? (
+        <ScannedPdfCard file={file} />
+      ) : null}
+
       <article className="card">
         <div className="card-head">
           <h2 className="title-sm">추출 미리보기</h2>
@@ -360,4 +365,59 @@ function defaultSplitRule(file: DataFile): string | undefined {
   if (file.fileCategory === "tabular") return undefined;
   const name = file.originalName.toLowerCase();
   return file.extension.toLowerCase() === "pdf" || name.endsWith(".ocr.txt") ? "sinmungo" : undefined;
+}
+
+/**
+ * 글자 없는 스캔본 안내. 서버는 원본을 내려주지 않으므로, 같은 PDF를 다시 고르면 이 브라우저에서
+ * 글자를 읽어 글자 파일로 올리고 서버가 민원 분석까지 이어 간다(진행은 팝업으로 보인다).
+ * @param file 스캔본 PDF 파일 정보
+ */
+function ScannedPdfCard({ file }: { file: DataFile }) {
+  const { readScanned, hasSource } = useCatalog();
+  const { begin } = useProgress();
+  const [error, setError] = useState("");
+
+  const start = (source?: File) => {
+    // 다른 파일을 읽지 않도록 올린 파일과 크기를 맞춰 본다
+    if (source && source.size !== file.sizeBytes) {
+      setError("올린 PDF와 크기가 다른 파일입니다. 같은 파일을 골라 주세요.");
+      return;
+    }
+    setError("");
+    const [key] = begin([{ name: file.originalName, fileId: file.id, step: "ocr", scanned: true }]);
+    void readScanned(key, file.id, source);
+  };
+
+  return (
+    <article className="card">
+      <div className="card-head">
+        <h2 className="title-sm">글자 없는 스캔본</h2>
+      </div>
+      <p className="body">
+        이 PDF는 이미지로만 되어 있어 서버가 글자를 읽지 못했습니다. 이 브라우저에서 글자를 읽으면 민원 분석까지
+        자동으로 이어집니다. 쪽수에 따라 몇 분 걸리며, 파일은 밖으로 보내지 않습니다.
+      </p>
+      {hasSource(file.id) ? (
+        <Button onClick={() => start()}>글자 읽고 분석하기</Button>
+      ) : (
+        <label className="field">
+          <span>원본 PDF 다시 선택</span>
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            onChange={(event) => {
+              const picked = event.target.files?.[0];
+              event.target.value = "";
+              if (picked) start(picked);
+            }}
+          />
+        </label>
+      )}
+      {error ? (
+        <p className="feedback feedback-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </article>
+  );
 }

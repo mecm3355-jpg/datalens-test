@@ -74,6 +74,11 @@ type CatalogValue = {
   requestAnalysis: (fileId: string, mapping: Partial<Record<string, MappingField>>, splitRule?: string) => Promise<void>;
   // 파일의 민원 전체를 한 카테고리로 확정한다(관리자만, 서버에 저장)
   assignFileCategory: (fileId: string, categoryId: string) => Promise<void>;
+  // 이 창에서 올린 원본이 남아 있는지(스캔본을 브라우저에서 읽을 수 있는지)
+  hasSource: (fileId: string) => boolean;
+  // 글자 없는 스캔본을 브라우저에서 읽어 글자 파일로 올린다. 서버가 그 파일을 이어서 분석한다.
+  // source를 주면 그 파일(다시 고른 원본)을, 없으면 이 창에서 올린 원본을 읽는다
+  readScanned: (progressKey: string, fileId: string, source?: File) => Promise<void>;
   // 파일과 관련 결과를 삭제한다. 성공하면 true, 실패하면 오류를 화면에 띄우고 false
   deleteFile: (fileId: string) => Promise<boolean>;
   categoryById: (id: string | null | undefined) => Category | undefined;
@@ -170,6 +175,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [active]);
   const { items: progressItems, begin, update, flash } = useProgress();
+  // 서버는 원본을 내려주지 않으므로, 스캔본을 브라우저에서 읽으려고 이 창에서 올린 원본을 기억한다
+  const sources = useRef(new Map<string, File>());
+  // 글자 읽기는 무거워 한 번에 한 파일씩 차례로 돌린다
+  const ocrQueue = useRef<Promise<void>>(Promise.resolve());
   // 진행 팝업에 끝나지 않은 파일이 있으면 그 파일이 끝날 때까지 새로고침한다
   const tracking = progressItems.some((item) => item.step !== "done" && item.step !== "stopped" && item.step !== "failed");
   const polling = active || grace || tracking;
@@ -242,6 +251,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
             try {
               const uploaded = await uploadFile(file);
               ids.push(uploaded.fileId);
+              sources.current.set(uploaded.fileId, file);
               update(keys[index], { fileId: uploaded.fileId, step: "diagnosing" });
             } catch (reason: unknown) {
               errors.push(`${file.name}: ${messageOf(reason)}`);
@@ -277,6 +287,43 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         ]);
         const ok = await run(() => startAnalysis(fileId, mapping, splitRule).then(() => undefined));
         if (!ok) update(key, { step: "failed", detail: "분석을 시작하지 못했습니다." });
+      },
+      hasSource: (fileId) => sources.current.has(fileId),
+      readScanned: (progressKey, fileId, source) => {
+        const pdf = source ?? sources.current.get(fileId);
+        const name = server?.files.find((file) => file.id === fileId)?.originalName ?? pdf?.name ?? "스캔본.pdf";
+        const task = ocrQueue.current.then(async () => {
+          if (!pdf) {
+            update(progressKey, { step: "stopped", detail: "원본 PDF가 없어 글자를 읽을 수 없습니다. 파일 화면에서 원본을 다시 고르세요." });
+            return;
+          }
+          update(progressKey, { step: "ocr", scanned: true, scanChecked: true, percent: 0, detail: "" });
+          try {
+            // OCR 라이브러리는 크므로 실제로 스캔본을 만났을 때만 불러온다
+            const { readScannedPdf } = await import("../lib/browserOcr");
+            const text = await readScannedPdf(pdf, (done, total) => {
+              update(progressKey, {
+                percent: total > 0 ? Math.round((done / total) * 100) : null,
+                detail: `글자 읽는 중 ${done}/${total}쪽 · 창을 닫지 마세요.`,
+              });
+            });
+            // 읽은 글자를 글자 파일로 올리면 서버가 국민신문고 서식을 알아보고 민원 분석까지 이어 간다
+            const uploaded = await uploadFile(new File([text], `${name}.ocr.txt`, { type: "text/plain" }));
+            update(progressKey, {
+              fileId: uploaded.fileId,
+              step: "diagnosing",
+              percent: null,
+              detail: "",
+              ignoreJobId: null,
+              waitingSince: null,
+            });
+            await reload();
+          } catch (reason: unknown) {
+            update(progressKey, { step: "failed", percent: null, detail: `글자 읽기 실패: ${messageOf(reason)}` });
+          }
+        });
+        ocrQueue.current = task;
+        return task;
       },
       deleteFile: async (fileId) => {
         // 삭제 뒤 화면을 옮길지 정해야 하므로 run과 달리 성공 여부를 돌려준다

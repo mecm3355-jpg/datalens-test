@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_START_WAIT_MS, nextStep, type ServerState } from "./stages";
+import { AUTO_START_WAIT_MS, nextStep, stepsFor, type ServerState } from "./stages";
 
 const base: ServerState = {
   status: "processing",
@@ -52,5 +52,10 @@ describe("처리 단계 판단", () => {
   it("실패하면 서버 오류 메시지를 담는다", () => {
     const failed = nextStep({ ...base, status: "failed", jobError: "원본 파일이 저장소에 없습니다." }, null, null, 0);
     expect(failed).toEqual({ step: "failed", detail: "원본 파일이 저장소에 없습니다.", waitingSince: null });
+  });
+
+  it("스캔본만 글자 읽기 단계를 거친다", () => {
+    expect(stepsFor(false)).toEqual(["uploading", "diagnosing", "analyzing", "done"]);
+    expect(stepsFor(true)).toEqual(["uploading", "diagnosing", "ocr", "analyzing", "done"]);
   });
 });

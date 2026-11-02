@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { isFinished, STEP_DETAIL, STEP_LABEL, STEP_ORDER, type Step } from "../lib/stages";
+import { isFinished, STEP_DETAIL, STEP_LABEL, stepsFor, type Step } from "../lib/stages";
 
 /** 진행 팝업에서 따라가는 파일 한 개. */
 export type ProgressItem = {
@@ -14,6 +14,10 @@ export type ProgressItem = {
   ignoreJobId: string | null;
   // 진단이 끝나 자동 분석을 기다리기 시작한 시각
   waitingSince: number | null;
+  // 글자 없는 스캔본이라 브라우저 글자 읽기 단계를 거치는지
+  scanned: boolean;
+  // 스캔본인지 서버 진단 결과로 이미 확인했는지(한 번만 확인)
+  scanChecked: boolean;
 };
 
 /** 버튼 없이 잠깐 보였다 사라지는 완료 안내(후보 승인 등). */
@@ -22,7 +26,9 @@ export type Flash = { title: string; message: string; tone: "success" | "info" |
 type ProgressValue = {
   items: ProgressItem[];
   // 파일들을 진행 팝업에 올린다. 파일마다 키를 돌려준다
-  begin: (entries: Array<{ name: string; fileId?: string; step?: Step; ignoreJobId?: string | null }>) => string[];
+  begin: (
+    entries: Array<{ name: string; fileId?: string; step?: Step; ignoreJobId?: string | null; scanned?: boolean }>,
+  ) => string[];
   update: (key: string, patch: Partial<Omit<ProgressItem, "key">>) => void;
   flash: (flash: Flash) => void;
 };
@@ -53,6 +59,8 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         percent: null,
         ignoreJobId: entry.ignoreJobId ?? null,
         waitingSince: null,
+        scanned: entry.scanned ?? false,
+        scanChecked: entry.scanned ?? false,
       };
     });
     // 이미 끝난 항목이 남아 있으면 새 진행과 섞이지 않게 비우고 시작한다
@@ -115,15 +123,18 @@ function ProgressDialog({ items }: { items: ProgressItem[] }) {
 
 /** 파일 한 개의 진행 상태: 이름, 단계 표시줄, 설명. */
 function ProgressRow({ item }: { item: ProgressItem }) {
-  const reached = item.step === "stopped" || item.step === "failed" ? -1 : STEP_ORDER.indexOf(item.step);
+  const steps = stepsFor(item.scanned);
+  const reached = steps.findIndex((step) => step === item.step);
   const detail =
     item.detail ||
-    (item.step === "uploading" || item.step === "diagnosing" || item.step === "analyzing" ? STEP_DETAIL[item.step] : "");
+    (item.step === "uploading" || item.step === "diagnosing" || item.step === "ocr" || item.step === "analyzing"
+      ? STEP_DETAIL[item.step]
+      : "");
   return (
     <li className={`progress-file progress-${item.step}`}>
       <p className="progress-name">{item.name}</p>
-      <ol className="progress-steps" aria-label="처리 단계">
-        {STEP_ORDER.map((step, index) => {
+      <ol className="progress-steps" aria-label="처리 단계" style={{ gridTemplateColumns: `repeat(${steps.length}, 1fr)` }}>
+        {steps.map((step, index) => {
           const state = index < reached || item.step === "done" ? "done" : index === reached ? "current" : "todo";
           return (
             <li key={step} className={`progress-step progress-step-${state}`} aria-current={state === "current" ? "step" : undefined}>
