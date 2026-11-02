@@ -83,6 +83,47 @@ async def test_successful_job(db: AsyncDatabase[Document], tmp_path: Path) -> No
     assert file.status == "completed"
 
 
+async def test_follow_up_runs_after_completion_and_failure_keeps_job_completed(
+    db: AsyncDatabase[Document], tmp_path: Path
+) -> None:
+    file, job = await seed(db)
+    seen: list[str] = []
+
+    async def handler(ctx: JobContext) -> None:
+        await ctx.report("parsing", 50)
+
+    async def follow_up(ctx: JobContext) -> None:
+        # 완료 기록 뒤에 불리므로 DB의 작업은 이미 completed다
+        stored = await JobRepository(db).get(ctx.job.id)
+        assert stored is not None
+        seen.append(stored.status)
+        raise RuntimeError("후속 작업 실패")
+
+    worker = JobRunner(db, make_settings(tmp_path), {TEST_TYPE: handler}, {TEST_TYPE: follow_up})
+    assert await worker.run_once()
+
+    file, job = await reload(db, file, job)
+    assert seen == ["completed"]
+    assert (job.status, file.status) == ("completed", "completed")
+
+
+async def test_follow_up_skipped_when_job_fails(
+    db: AsyncDatabase[Document], tmp_path: Path
+) -> None:
+    await seed(db)
+    seen: list[str] = []
+
+    async def handler(ctx: JobContext) -> None:
+        raise AppError("PARSE_ERROR", "CSV를 읽을 수 없습니다.")
+
+    async def follow_up(ctx: JobContext) -> None:
+        seen.append("called")
+
+    worker = JobRunner(db, make_settings(tmp_path), {TEST_TYPE: handler}, {TEST_TYPE: follow_up})
+    await worker.run_once()
+    assert seen == []
+
+
 async def test_app_error_marks_failed_and_keeps_stage(
     db: AsyncDatabase[Document], tmp_path: Path
 ) -> None:

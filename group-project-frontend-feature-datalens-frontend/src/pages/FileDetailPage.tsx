@@ -199,9 +199,10 @@ function FileDetail({ fileId }: { fileId: string }) {
                   void startComplaintAnalysis();
                 }
               }}
-              disabled={file.status === "processing"}
+              // 업로드 진단 뒤 서버가 민원 분석을 이어서 등록하므로 대기 중에도 누르지 못하게 한다(409 방지)
+              disabled={file.status === "processing" || file.status === "queued"}
             >
-              {file.status === "processing" ? "처리 중" : file.status === "failed" ? "처리 다시 시도" : preview.length > 0 ? "민원 다시 분석" : "민원 분석 실행"}
+              {file.status === "processing" || file.status === "queued" ? "처리 중" : file.status === "failed" ? "처리 다시 시도" : preview.length > 0 ? "민원 다시 분석" : "민원 분석 실행"}
             </Button> : null}
             <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting}>
               {isDeleting ? "삭제 중" : "파일 삭제"}
@@ -607,7 +608,7 @@ function MappingCard({
             : "경도·위도 열 이름이 서로 바뀌어 있습니다. 교정하면 열 이름과 값을 맞춰 읽습니다."}
         </p>
       ) : (
-        <p className="caption">공통 필드에 맞춘 뒤 분석을 실행합니다.</p>
+        <p className="caption">업로드 진단이 끝나면 추천 매핑으로 민원 분석을 자동 실행합니다. 틀린 열은 고친 뒤 다시 분석하세요.</p>
       )}
       <div className="mapping-grid notice">
         {columns.map((column) => (

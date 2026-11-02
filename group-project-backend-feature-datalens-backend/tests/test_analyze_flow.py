@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.core.database import Mongo
-from app.services.job_handlers import HANDLERS
+from app.services.job_handlers import FOLLOW_UPS, HANDLERS
 from app.services.job_runner import JobRunner
 from tests.conftest import requires_db
 from tests.document_files import make_docx, make_pdf
@@ -33,7 +33,7 @@ def run_worker(client: TestClient) -> int:
         """대기 작업이 없을 때까지 실행한다."""
         mongo = Mongo(settings.mongodb_uri, settings.mongodb_db_name)
         try:
-            runner = JobRunner(mongo.db, settings, HANDLERS)
+            runner = JobRunner(mongo.db, settings, HANDLERS, FOLLOW_UPS)
             count = 0
             while await runner.run_once():
                 count += 1

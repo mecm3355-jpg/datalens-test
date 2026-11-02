@@ -11,6 +11,7 @@ import { notifyComplaintDataChanged } from "../lib/events";
 import type { CleaningRule, DataFile, DataReport, DemoCleaningArtifact } from "../types";
 
 const POLL_INTERVAL_MS = 1_500;
+const COMPLAINT_ANALYSIS_JOB = "complaint_analysis";
 const MAX_POLL_ATTEMPTS = 1_200;
 
 export type UploadResult = {
@@ -164,7 +165,9 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     }
   }, [patchFile]);
 
-  const pollJob = useCallback(async (jobId: string, fileId: string): Promise<ApiJob> => {
+  // 작업이 끝날 때까지 상태를 읽고, 서버가 이어서 등록한 작업이 있으면 그 작업까지 따라간다.
+  // 마지막으로 끝난 작업을 돌려준다
+  const pollJob = useCallback(async function pollJob(jobId: string, fileId: string): Promise<ApiJob> {
     for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
       const job = await datalensApi.job(jobId);
       setJobsByFile((current) => ({ ...current, [fileId]: job }));
@@ -177,6 +180,13 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         const refreshed = await datalensApi.getFile(fileId);
         setFiles((current) => current.map((file) => (file.id === fileId ? toDataFile(refreshed) : file)));
         void refreshDashboard();
+        if (job.type === COMPLAINT_ANALYSIS_JOB && job.status === "completed") notifyComplaintDataChanged();
+        // 서버는 표 파일의 진단이 끝나면 민원 분석을 이어서 등록한다. 그 작업까지 지켜봐야
+        // 새로고침 없이 상태와 민원 화면이 갱신된다
+        const nextJobId = refreshed.lastJobId;
+        if (nextJobId && nextJobId !== jobId && (refreshed.status === "queued" || refreshed.status === "processing")) {
+          return pollJob(nextJobId, fileId);
+        }
         return job;
       }
       await delay(POLL_INTERVAL_MS);
