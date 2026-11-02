@@ -3,7 +3,7 @@
 다양한 원본 데이터를 하나의 분석 작업으로 관리하는 AI 데이터 품질 관리 플랫폼의 프론트엔드
 
 ## 기술 스택
-React.js (Typescript) + Vite
+React.js (Typescript) + Vite 
 
 ## 명령어
 - 개발 서버: `npm run dev`

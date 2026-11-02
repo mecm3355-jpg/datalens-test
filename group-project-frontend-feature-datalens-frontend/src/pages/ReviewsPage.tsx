@@ -1,24 +1,19 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
 import { REVIEW_REASON_LABEL } from "../lib/labels";
-import { useComplaintData } from "../state/complaintData";
-import { useSession } from "../state/session";
+import { useCatalog } from "../state/catalog";
 
 export function ReviewsPage() {
-  const { reviews, complaints, categories, categoryById, confirmReview, loading, error } = useComplaintData();
-  const { user } = useSession();
-  const canManage = user?.role === "admin" || user === null;
+  const { reviews, categories, categoryById, complaintById, confirmReview } = useCatalog();
   const [choice, setChoice] = useState<Record<string, string>>({});
-  const [actionError, setActionError] = useState<string | null>(null);
   const rows = reviews.map((review) => ({
     review,
-    complaint: complaints.find((item) => item.id === review.complaintId),
-    state: { status: review.status, reviewedCategoryId: review.reviewedCategoryId ?? null },
+    complaint: complaintById(review.complaintId),
   }));
-  const pending = rows.filter((row) => row.state.status === "pending").length;
+  const pending = rows.filter((row) => row.review.status === "pending").length;
 
   return (
     <div className="page">
@@ -27,8 +22,6 @@ export function ReviewsPage() {
         title="검토"
         lede="애매한 배정, 긴급 민원, 속성이 비어 있는 민원을 사람이 확정합니다. 아래는 대표 검토 건입니다."
       />
-      {loading ? <p className="notice">검토 데이터를 불러오는 중입니다.</p> : null}
-      {error || actionError ? <p className="feedback feedback-error" role="alert">{actionError ?? error}</p> : null}
       <DataTable
         rows={rows}
         rowKey={(row) => row.review.id}
@@ -57,8 +50,8 @@ export function ReviewsPage() {
             key: "status",
             header: "상태",
             render: (row) => (
-              <span className={row.state.status === "pending" ? "pill pill-pending" : "pill"}>
-                {row.state.status === "pending" ? "대기" : "확정"}
+              <span className={row.review.status === "pending" ? "pill pill-pending" : "pill"}>
+                {row.review.status === "pending" ? "대기" : "확정"}
               </span>
             ),
           },
@@ -66,15 +59,9 @@ export function ReviewsPage() {
             key: "action",
             header: "결정",
             render: (row) => {
-              if (row.state.status === "done") {
-                return (
-                  <span>
-                    {categoryById(row.state.reviewedCategoryId)?.name ?? "미배정 확정"}
-                    {row.review.reviewedBy ? <span className="caption"> · {row.review.reviewedBy}</span> : null}
-                  </span>
-                );
+              if (row.review.status === "done") {
+                return categoryById(row.review.reviewedCategoryId)?.name ?? "확정";
               }
-              if (!canManage) return <span className="caption">관리자만 확정할 수 있습니다.</span>;
               const selected = choice[row.review.id] ?? row.review.suggestedCategoryId ?? categories[0]?.categoryId ?? "";
               return (
                 <div className="cluster">
@@ -92,13 +79,7 @@ export function ReviewsPage() {
                       </option>
                     ))}
                   </select>
-                  <Button onClick={() => {
-                    void confirmReview(row.review.id, selected)
-                      .then(() => setActionError(null))
-                      .catch((reviewError: unknown) => {
-                        setActionError(reviewError instanceof Error ? reviewError.message : "검토 결과를 저장하지 못했습니다.");
-                      });
-                  }}>확정</Button>
+                  <Button onClick={() => void confirmReview(row.review.id, selected)}>확정</Button>
                 </div>
               );
             },

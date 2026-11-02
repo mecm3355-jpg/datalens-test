@@ -41,6 +41,7 @@ from app.schemas.complaint_api import (
     CandidateDecisionRequest,
     CandidateDecisionResult,
     ComplaintAnalysisRequest,
+    FileCategoryResult,
     ReviewDecisionRequest,
 )
 from app.schemas.job import JobDocument
@@ -813,6 +814,52 @@ class ComplaintService:
             c.id: c for c in await self._complaints.get_many([r.complaint_id for r in found])
         }
         return [(r, complaints.get(r.complaint_id)) for r in found], total
+
+    async def assign_file_category(
+        self, file_id: str, category_id: str, decided_by: str
+    ) -> FileCategoryResult:
+        """파일의 활성 민원 전체를 한 카테고리로 사람이 확정한다(대시보드의 파일별 카테고리 선택).
+
+        검토 저장과 같은 기준을 쓴다: 현재 체계의 활성 카테고리만, 배정 상태는 confirmed,
+        검토 대기 표시는 내리고 그 민원들의 대기 검토도 끝낸다.
+        분석된 민원이 없으면(분석 전·실패) 409로 알린다.
+
+        파라미터:
+            file_id: 파일 ID 문자열
+            category_id: 확정할 카테고리 ID
+            decided_by: 확정한 사람(검토 이력에 남김)
+        """
+        oid = parse_file_id(file_id)
+        if await self._files.get(oid) is None:
+            raise AppError("FILE_NOT_FOUND", "파일을 찾을 수 없습니다.", 404)
+        latest = await self._categories.latest_version()
+        category = await self._categories.get_in_version(category_id, latest) if latest else None
+        if category is None or category.status != "active":
+            raise AppError("CATEGORY_NOT_FOUND", "카테고리가 현재 체계에 없습니다.", 422)
+        complaint_ids = await self._complaints.active_ids_by_file(oid)
+        if not complaint_ids:
+            raise AppError(
+                "NO_COMPLAINTS",
+                "이 파일에는 분석된 민원이 없습니다. 민원 분석이 끝난 뒤 고를 수 있습니다.",
+                409,
+            )
+        fields: dict[str, object] = {
+            "categoryId": category.category_id,
+            "group": category.group,
+            "assignStatus": "confirmed",
+            "taxonomyVersion": latest,
+            "needsReview": False,
+        }
+        await self._complaints.update_fields([(cid, fields) for cid in complaint_ids])
+        closed = await self._reviews.complete_for_complaints(
+            complaint_ids, category.category_id, decided_by, utc_now()
+        )
+        return FileCategoryResult(
+            file_id=file_id,
+            category_id=category.category_id,
+            updated_count=len(complaint_ids),
+            reviews_closed=closed,
+        )
 
     async def review(self, review_id: str, request: ReviewDecisionRequest) -> ReviewDocument:
         """검토 결과를 저장한다. 카테고리를 주면 그 카테고리로 확정(confirmed)하고,

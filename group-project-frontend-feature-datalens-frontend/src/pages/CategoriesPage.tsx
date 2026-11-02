@@ -1,46 +1,19 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { Button } from "../components/Button";
 import { CategoryTabs } from "../components/CategoryTabs";
 import { DataTable } from "../components/DataTable";
 import { Delta } from "../components/Delta";
 import { PageIntro } from "../components/PageIntro";
 import { formatDate, formatNumber } from "../lib/format";
-import { useWorkspace } from "../state/workspace";
-import { useComplaintData } from "../state/complaintData";
-import { useSession } from "../state/session";
-import type { Category } from "../types";
-
-function groupCategories(categories: Category[]) {
-  const groups = new Map<string, Category[]>();
-  categories.forEach((category) => groups.set(category.group, [...(groups.get(category.group) ?? []), category]));
-  return [...groups.entries()].map(([group, items]) => ({
-    group,
-    categories: items,
-    count: items.reduce((sum, item) => sum + item.count, 0),
-    previousCount: items.reduce((sum, item) => sum + item.previousCount, 0),
-  }));
-}
+import { useCatalog } from "../state/catalog";
+import type { Mapping } from "../types";
 
 export function CategoriesPage() {
-  const {
-    categories,
-    categoryById,
-    complaints,
-    insights,
-    mappings: apiMappings,
-    mergeCategories,
-    splitCategory,
-    taxonomyVersion,
-    loading,
-    error,
-  } = useComplaintData();
-  const { user } = useSession();
-  const groups = groupCategories(categories);
+  const { categories, categoryById, groupedCategories, taxonomyVersion } = useCatalog();
+  const groups = groupedCategories();
+  const mappings: Mapping[] = [];
   const [openGroup, setOpenGroup] = useState<string | null>(groups[0]?.group ?? null);
-  const { mappings: demoMappings, addMapping, dataMode } = useWorkspace();
-  const mappings = dataMode === "api" ? apiMappings : demoMappings;
-  const canManage = user?.role === "admin" || user === null;
   const [mergeFrom, setMergeFrom] = useState(categories[0]?.categoryId ?? "");
   const [mergeTo, setMergeTo] = useState(categories[1]?.categoryId ?? "");
   const [mergeReason, setMergeReason] = useState("");
@@ -49,93 +22,24 @@ export function CategoriesPage() {
   const [splitName, setSplitName] = useState("");
   const [splitReason, setSplitReason] = useState("");
   const [splitError, setSplitError] = useState("");
-  const [splitComplaintIds, setSplitComplaintIds] = useState<string[]>([]);
-  const resolvedOpenGroup = openGroup ?? groups[0]?.group ?? null;
-  const resolvedMergeFrom = categories.some((item) => item.categoryId === mergeFrom)
-    ? mergeFrom
-    : categories[0]?.categoryId ?? "";
-  const resolvedMergeTo = categories.some((item) => item.categoryId === mergeTo)
-    ? mergeTo
-    : categories[1]?.categoryId ?? categories[0]?.categoryId ?? "";
-  const resolvedSplitFrom = categories.some((item) => item.categoryId === splitFrom)
-    ? splitFrom
-    : categories[0]?.categoryId ?? "";
-  const splitComplaints = complaints.filter(
-    (item) => item.categoryId === resolvedSplitFrom,
-  );
 
-  async function onMerge(event: FormEvent) {
+  function onMerge(event: FormEvent) {
     event.preventDefault();
-    if (resolvedMergeFrom === resolvedMergeTo) {
+    if (mergeFrom === mergeTo) {
       setMergeError("서로 다른 카테고리를 선택하세요.");
       return;
     }
-    const from = categoryById(resolvedMergeFrom);
-    const to = categoryById(resolvedMergeTo);
-    if (!from || !to) return;
-    try {
-      if (dataMode === "api") {
-        await mergeCategories(from.categoryId, to.categoryId, mergeReason.trim());
-      } else {
-        addMapping({
-          type: "merge",
-          fromCategoryId: from.categoryId,
-          toCategoryId: to.categoryId,
-          fromName: from.name,
-          toName: to.name,
-          fromVersion: taxonomyVersion,
-          toVersion: taxonomyVersion + 1,
-          reason: mergeReason.trim() || null,
-        });
-      }
-      setMergeReason("");
-      setMergeError("");
-    } catch (actionError) {
-      setMergeError(actionError instanceof Error ? actionError.message : "카테고리를 병합하지 못했습니다.");
-    }
+    if (!categoryById(mergeFrom) || !categoryById(mergeTo)) return;
+    setMergeError("서버에 카테고리 병합 API가 아직 없습니다. 신규 후보를 기존 카테고리에 합칠 수는 있습니다.");
   }
 
-  async function onSplit(event: FormEvent) {
+  function onSplit(event: FormEvent) {
     event.preventDefault();
-    const from = categoryById(resolvedSplitFrom);
-    const name = splitName.trim();
-    if (!from || name.length === 0) {
+    if (!categoryById(splitFrom) || splitName.trim().length === 0) {
       setSplitError("나눌 카테고리와 새 이름이 필요합니다.");
       return;
     }
-    if (dataMode === "api" && (splitComplaintIds.length === 0 || splitComplaintIds.length >= splitComplaints.length)) {
-      setSplitError("분할할 민원을 한 건 이상 선택하고, 원본 카테고리에 한 건 이상 남겨야 합니다.");
-      return;
-    }
-    try {
-      if (dataMode === "api") {
-        await splitCategory({
-          sourceCategoryId: from.categoryId,
-          name,
-          group: from.group,
-          definition: from.definition,
-          complaintIds: splitComplaintIds,
-          reason: splitReason.trim(),
-        });
-      } else {
-        addMapping({
-          type: "split",
-          fromCategoryId: from.categoryId,
-          toCategoryId: "발급 전",
-          fromName: from.name,
-          toName: name,
-          fromVersion: taxonomyVersion,
-          toVersion: taxonomyVersion + 1,
-          reason: splitReason.trim() || null,
-        });
-      }
-      setSplitName("");
-      setSplitReason("");
-      setSplitComplaintIds([]);
-      setSplitError("");
-    } catch (actionError) {
-      setSplitError(actionError instanceof Error ? actionError.message : "카테고리를 분할하지 못했습니다.");
-    }
+    setSplitError("서버에 카테고리 분할 API가 아직 없습니다.");
   }
 
   return (
@@ -145,28 +49,12 @@ export function CategoriesPage() {
         title="카테고리"
         lede={`활성 ${formatNumber(categories.length)}개 · 상위 그룹 ${formatNumber(groups.length)}개. 분기마다 겹치는 범주는 합치고, 너무 커진 범주는 나눕니다.`}
       />
-      {loading ? <p className="notice">카테고리 체계를 불러오는 중입니다.</p> : null}
-      {error ? <p className="feedback feedback-error" role="alert">{error}</p> : null}
       <CategoryTabs />
-      {dataMode === "api" && insights.length > 0 ? (
-        <section className="stat-row" aria-label="민원 인사이트">
-          {insights.map((insight) => (
-            <article className="stat" key={insight.type}>
-              <p className="stat-label">{insight.title}</p>
-              <p className="stat-value">{formatNumber(insight.count)}건</p>
-              <p className="caption">{insight.description}</p>
-            </article>
-          ))}
-        </section>
-      ) : null}
       <section className="layout-main-side">
         <article className="card card-scroll">
-          {!loading && groups.length === 0 ? (
-            <p className="empty">아직 확정된 카테고리가 없습니다. 신규 후보 탭에서 후보를 승인하면 체계에 들어갑니다.</p>
-          ) : null}
           <div className="bar-list">
             {groups.map((group) => {
-              const open = resolvedOpenGroup === group.group;
+              const open = openGroup === group.group;
               return (
                 <div key={group.group}>
                   <button
@@ -211,17 +99,17 @@ export function CategoriesPage() {
             })}
           </div>
         </article>
-        {canManage ? <div className="stack">
+        <div className="stack">
           <form className="card" onSubmit={onMerge}>
             <h2 className="title-sm">병합</h2>
             <div className="form-grid form-stack notice">
               <label className="field">
                 <span>합칠 카테고리</span>
-                <CategorySelect categories={categories} value={resolvedMergeFrom} onChange={setMergeFrom} />
+                <CategorySelect categories={categories} value={mergeFrom} onChange={setMergeFrom} />
               </label>
               <label className="field">
                 <span>남길 카테고리</span>
-                <CategorySelect categories={categories} value={resolvedMergeTo} onChange={setMergeTo} />
+                <CategorySelect categories={categories} value={mergeTo} onChange={setMergeTo} />
               </label>
               <label className="field">
                 <span>사유</span>
@@ -238,35 +126,12 @@ export function CategoriesPage() {
             <div className="form-grid form-stack notice">
               <label className="field">
                 <span>나눌 카테고리</span>
-                <CategorySelect categories={categories} value={resolvedSplitFrom} onChange={(value) => {
-                  setSplitFrom(value);
-                  setSplitComplaintIds([]);
-                }} />
+                <CategorySelect categories={categories} value={splitFrom} onChange={setSplitFrom} />
               </label>
               <label className="field">
                 <span>새 이름</span>
                 <input className="input" value={splitName} onChange={(event) => setSplitName(event.target.value)} />
               </label>
-              {dataMode === "api" ? (
-                <fieldset className="field">
-                  <legend>새 카테고리로 이동할 민원</legend>
-                  <div className="stack notice">
-                    {splitComplaints.map((complaint) => (
-                      <label className="cluster" key={complaint.id}>
-                        <input
-                          type="checkbox"
-                          checked={splitComplaintIds.includes(complaint.id)}
-                          onChange={(event) => setSplitComplaintIds((current) => event.target.checked
-                            ? [...current, complaint.id]
-                            : current.filter((id) => id !== complaint.id))}
-                        />
-                        <span className="content-cell">{complaint.contentMasked}</span>
-                      </label>
-                    ))}
-                    {splitComplaints.length < 2 ? <span className="caption">분할하려면 이 카테고리에 민원이 두 건 이상 있어야 합니다.</span> : null}
-                  </div>
-                </fieldset>
-              ) : null}
               <label className="field">
                 <span>사유</span>
                 <input className="input" value={splitReason} onChange={(event) => setSplitReason(event.target.value)} />
@@ -279,12 +144,7 @@ export function CategoriesPage() {
               </Button>
             </div>
           </form>
-        </div> : (
-          <article className="card">
-            <h2 className="title-sm">카테고리 변경</h2>
-            <p className="notice">관리자만 카테고리를 병합하거나 분할할 수 있습니다.</p>
-          </article>
-        )}
+        </div>
       </section>
       <article className="card">
         <div className="card-head">
@@ -314,7 +174,15 @@ export function CategoriesPage() {
   );
 }
 
-function CategorySelect({ categories, value, onChange }: { categories: Category[]; value: string; onChange: (value: string) => void }) {
+function CategorySelect({
+  categories,
+  value,
+  onChange,
+}: {
+  categories: Array<{ categoryId: string; group: string; name: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <select className="select" value={value} onChange={(event) => onChange(event.target.value)}>
       {categories.map((category) => (

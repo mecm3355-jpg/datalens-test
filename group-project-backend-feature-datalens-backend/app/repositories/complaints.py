@@ -201,6 +201,17 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
                 counts[key if isinstance(key, str) else None] = count
         return counts
 
+    async def active_ids_by_file(self, file_id: ObjectId) -> list[ObjectId]:
+        """한 파일의 활성 민원 _id 목록.
+
+        파라미터:
+            file_id: 파일 _id
+        """
+        cursor = self.collection.find(
+            self._scoped({"fileId": file_id, "status": "active"}), {"_id": 1}
+        )
+        return [row["_id"] async for row in cursor if isinstance(row["_id"], ObjectId)]
+
     async def count_active(self, query: dict[str, object]) -> int:
         """추가 조건에 맞는 활성 민원 수를 센다."""
         return await self.collection.count_documents(self._scoped({"status": "active", **query}))

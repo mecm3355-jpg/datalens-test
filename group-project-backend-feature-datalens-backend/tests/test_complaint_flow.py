@@ -363,6 +363,10 @@ def test_only_admin_decides_and_sees_all_users(tmp_path: Path) -> None:
                 json={"reviewedBy": "가짜 이름"},
             )
             assert reviews.status_code == 403
+            file_category = client.post(
+                f"/api/v1/files/{file_id}/category", json={"categoryId": "CAT-0001"}
+            )
+            assert file_category.status_code == 403
 
             assert client.post("/api/v1/auth/logout").status_code == 200
             login = client.post(
@@ -536,3 +540,31 @@ def test_text_without_known_form_waits_for_rule(db_client: TestClient) -> None:
     detail = db_client.get(f"/api/v1/files/{file_id}").json()["data"]
     job = db_client.get(f"/api/v1/jobs/{detail['lastJobId']}").json()["data"]
     assert job["type"] == "analyze"
+
+
+def test_file_category_confirms_all_complaints_of_file(db_client: TestClient) -> None:
+    """파일별 카테고리 선택은 그 파일의 민원 전체를 사람 확정으로 바꾸고 현황에 반영된다."""
+    file_id = upload(db_client, "jan.csv", csv_bytes(first_month()))
+    run_worker(db_client)
+    lights = candidate_for(db_client, "가로등")
+    approved = db_client.post(
+        f"/api/v1/complaints/categories/candidates/{lights['candidateId']}/decision",
+        json={"decision": "approved", "name": "가로등 고장", "group": "안전·조명"},
+    )
+    category_id = approved.json()["data"]["categoryId"]
+
+    res = db_client.post(f"/api/v1/files/{file_id}/category", json={"categoryId": category_id})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["data"]["updatedCount"] == 24
+    stats = db_client.get("/api/v1/complaints/stats").json()["data"]
+    assert stats["assignment"]["confirmed"] == 24
+    assert stats["groups"] == [{"label": "안전·조명", "count": 24}]
+
+    unknown = db_client.post(f"/api/v1/files/{file_id}/category", json={"categoryId": "CAT-9999"})
+    assert unknown.json()["error"]["code"] == "CATEGORY_NOT_FOUND"
+    # 분석된 민원이 없는 파일은 고를 수 없다
+    other = upload(db_client, "people.csv", "이름,나이\n김,30\n".encode())
+    run_worker(db_client)
+    empty = db_client.post(f"/api/v1/files/{other}/category", json={"categoryId": category_id})
+    assert (empty.status_code, empty.json()["error"]["code"]) == (409, "NO_COMPLAINTS")

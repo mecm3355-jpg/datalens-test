@@ -1,40 +1,35 @@
-import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
-import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
-import { ComplaintDataProvider } from "./state/complaintData";
+import { CandidatesPage } from "./pages/CandidatesPage";
+import { CategoriesPage } from "./pages/CategoriesPage";
+import { ComplaintDetailPage } from "./pages/ComplaintDetailPage";
+import { ComplaintsPage } from "./pages/ComplaintsPage";
+import { AboutPage } from "./pages/AboutPage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { DataPage } from "./pages/DataPage";
+import { FileDetailPage } from "./pages/FileDetailPage";
+import { FilesPage } from "./pages/FilesPage";
+import { IssueDetailPage } from "./pages/IssueDetailPage";
+import { IssuesPage } from "./pages/IssuesPage";
+import { NotFoundPage } from "./pages/NotFoundPage";
+import { ReviewsPage } from "./pages/ReviewsPage";
+import { LoginPage } from "./pages/LoginPage";
+import { SignupPage } from "./pages/SignupPage";
+import { CatalogProvider } from "./state/catalog";
 import { SessionProvider, useSession } from "./state/session";
-import { WorkspaceProvider } from "./state/workspace";
 
-const AboutPage = lazy(() => import("./pages/AboutPage").then((module) => ({ default: module.AboutPage })));
-const CandidatesPage = lazy(() => import("./pages/CandidatesPage").then((module) => ({ default: module.CandidatesPage })));
-const CategoriesPage = lazy(() => import("./pages/CategoriesPage").then((module) => ({ default: module.CategoriesPage })));
-const ComplaintDetailPage = lazy(() => import("./pages/ComplaintDetailPage").then((module) => ({ default: module.ComplaintDetailPage })));
-const ComplaintsPage = lazy(() => import("./pages/ComplaintsPage").then((module) => ({ default: module.ComplaintsPage })));
-const DashboardPage = lazy(() => import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
-const DataPage = lazy(() => import("./pages/DataPage").then((module) => ({ default: module.DataPage })));
-const FileCleaningPage = lazy(() => import("./pages/FileCleaningPage").then((module) => ({ default: module.FileCleaningPage })));
-const FileDetailPage = lazy(() => import("./pages/FileDetailPage").then((module) => ({ default: module.FileDetailPage })));
-const FilesPage = lazy(() => import("./pages/FilesPage").then((module) => ({ default: module.FilesPage })));
-const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage").then((module) => ({ default: module.ForgotPasswordPage })));
-const IssueDetailPage = lazy(() => import("./pages/IssueDetailPage").then((module) => ({ default: module.IssueDetailPage })));
-const IssuesPage = lazy(() => import("./pages/IssuesPage").then((module) => ({ default: module.IssuesPage })));
-const LoginPage = lazy(() => import("./pages/LoginPage").then((module) => ({ default: module.LoginPage })));
-const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((module) => ({ default: module.NotFoundPage })));
-const ReviewsPage = lazy(() => import("./pages/ReviewsPage").then((module) => ({ default: module.ReviewsPage })));
-const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage").then((module) => ({ default: module.ResetPasswordPage })));
-const SignupPage = lazy(() => import("./pages/SignupPage").then((module) => ({ default: module.SignupPage })));
-
+/**
+ * 로그인한 사용자에게만 앱 화면을 보여 줍니다. 서버 API는 로그인을 요구하므로, 로그인 전에
+ * 데이터를 부르지 않도록 CatalogProvider도 이 안에 둡니다.
+ */
 function ProtectedShell() {
   const { loggedIn, loading } = useSession();
   if (loading) return <p className="notice">세션을 확인하는 중입니다.</p>;
   if (!loggedIn) return <Navigate to="/login" replace />;
   return (
-    <WorkspaceProvider>
-      <ComplaintDataProvider>
-        <AppShell />
-      </ComplaintDataProvider>
-    </WorkspaceProvider>
+    <CatalogProvider>
+      <AppShell />
+    </CatalogProvider>
   );
 }
 
@@ -42,32 +37,25 @@ export function App() {
   return (
     <BrowserRouter>
       <SessionProvider>
-        <RouteErrorBoundary>
-          <Suspense fallback={<p className="notice">화면을 불러오는 중입니다.</p>}>
-            <Routes>
-              <Route path="login" element={<LoginPage />} />
-              <Route path="signup" element={<SignupPage />} />
-              <Route path="forgot-password" element={<ForgotPasswordPage />} />
-              <Route path="reset-password" element={<ResetPasswordPage />} />
-              <Route element={<ProtectedShell />}>
-                <Route index element={<DashboardPage />} />
-                <Route path="files" element={<FilesPage />} />
-                <Route path="files/:fileId" element={<FileDetailPage />} />
-                <Route path="files/:fileId/cleaning" element={<FileCleaningPage />} />
-                <Route path="categories" element={<CategoriesPage />} />
-                <Route path="categories/candidates" element={<CandidatesPage />} />
-                <Route path="reviews" element={<ReviewsPage />} />
-                <Route path="issues" element={<IssuesPage />} />
-                <Route path="issues/:issueId" element={<IssueDetailPage />} />
-                <Route path="complaints" element={<ComplaintsPage />} />
-                <Route path="complaints/:complaintId" element={<ComplaintDetailPage />} />
-                <Route path="data" element={<DataPage />} />
-                <Route path="about" element={<AboutPage />} />
-                <Route path="*" element={<NotFoundPage />} />
-              </Route>
-            </Routes>
-          </Suspense>
-        </RouteErrorBoundary>
+        <Routes>
+          <Route path="login" element={<LoginPage />} />
+          <Route path="signup" element={<SignupPage />} />
+          <Route element={<ProtectedShell />}>
+            <Route index element={<DashboardPage />} />
+            <Route path="files" element={<FilesPage />} />
+            <Route path="files/:fileId" element={<FileDetailPage />} />
+            <Route path="categories" element={<CategoriesPage />} />
+            <Route path="categories/candidates" element={<CandidatesPage />} />
+            <Route path="reviews" element={<ReviewsPage />} />
+            <Route path="issues" element={<IssuesPage />} />
+            <Route path="issues/:issueId" element={<IssueDetailPage />} />
+            <Route path="complaints" element={<ComplaintsPage />} />
+            <Route path="data" element={<DataPage />} />
+            <Route path="about" element={<AboutPage />} />
+            <Route path="complaints/:complaintId" element={<ComplaintDetailPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
       </SessionProvider>
     </BrowserRouter>
   );

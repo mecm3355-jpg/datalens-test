@@ -1,8 +1,6 @@
 import type {
   Candidate,
   Category,
-  CleaningPreviewRow,
-  CleaningRule,
   Complaint,
   DataFile,
   HealthPoint,
@@ -695,9 +693,6 @@ export const files: DataFile[] = [
     sizeBytes: 1_840_000,
     status: "completed",
     createdAt: "2026-10-25",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    storageLocation: "demo://files/file-virtual",
-    analysisSupported: false,
     rowCount: 1000,
     columns: ["민원내용", "접수일시", "지역", "대분류", "세부분류", "긴급도"],
     mapping: {
@@ -717,9 +712,6 @@ export const files: DataFile[] = [
     sizeBytes: 48_200,
     status: "completed",
     createdAt: "2026-10-24",
-    mimeType: "text/csv",
-    storageLocation: "demo://files/file-pohang",
-    analysisSupported: true,
     rowCount: 113,
     columns: ["번호", "접수일", "신고상담내용", "경도", "위도", "주소"],
     mapping: {
@@ -740,9 +732,6 @@ export const files: DataFile[] = [
     sizeBytes: 120_400,
     status: "processing",
     createdAt: "2026-10-25",
-    mimeType: "text/csv",
-    storageLocation: "demo://files/file-ocr",
-    analysisSupported: true,
     rowCount: 500,
     columns: ["제목", "처리기관", "등록일"],
     mapping: {
@@ -759,9 +748,6 @@ export const files: DataFile[] = [
     sizeBytes: 8_400_000,
     status: "queued",
     createdAt: "2026-10-23",
-    mimeType: "text/csv",
-    storageLocation: "demo://files/file-asan",
-    analysisSupported: true,
     rowCount: 27909,
     columns: ["접수일시", "민원유형-중", "처리부서", "처리팀"],
     mapping: {
@@ -779,9 +765,6 @@ export const files: DataFile[] = [
     sizeBytes: 220_400,
     status: "failed",
     createdAt: "2026-10-22",
-    mimeType: "application/octet-stream",
-    storageLocation: "demo://files/file-fail",
-    analysisSupported: false,
     rowCount: null,
     columns: [],
     mapping: {},
@@ -873,140 +856,6 @@ export const qualityByFile: Record<string, QualityIssue[]> = {
       count: 3,
       location: "신고상담내용",
       message: "신고상담내용 필드에 결측치가 있습니다.",
-    },
-  ],
-};
-
-const baseCleaningRules: CleaningRule[] = [
-  {
-    id: "trim-whitespace",
-    name: "불필요한 공백 정리",
-    description: "본문 앞뒤 공백과 연속된 공백을 하나로 정리합니다.",
-    affectedRows: 18,
-    severity: "recommended",
-  },
-  {
-    id: "normalize-date",
-    name: "날짜 형식 통일",
-    description: "서로 다른 날짜 표현을 YYYY-MM-DD 형식으로 통일합니다.",
-    affectedRows: 11,
-    severity: "required",
-  },
-  {
-    id: "remove-empty",
-    name: "빈 행 제외",
-    description: "분석할 본문이 없는 행을 정제 결과에서 제외합니다.",
-    affectedRows: 3,
-    severity: "recommended",
-  },
-];
-
-export function cleaningRulesByFile(fileId: string): CleaningRule[] {
-  if (fileId === "file-pohang") {
-    return [
-      ...baseCleaningRules,
-      {
-        id: "swap-coordinates",
-        name: "경도·위도 열 교정",
-        description: "뒤바뀐 경도와 위도 열의 이름을 실제 값에 맞게 교정합니다.",
-        affectedRows: 72,
-        severity: "required",
-      },
-      {
-        id: "remove-system-text",
-        name: "시스템 문구 제외",
-        description: "테스트 및 자동 생성 문구로 판정된 행을 제외합니다.",
-        affectedRows: 7,
-        severity: "recommended",
-      },
-    ];
-  }
-  return baseCleaningRules;
-}
-
-export const cleaningPreviewByFile: Record<string, CleaningPreviewRow[]> = {
-  "file-pohang": [
-    {
-      id: "clean-1",
-      row: 12,
-      field: "신고상담내용",
-      before: "  수청동  놀이터 옆 가로등이 밤마다 깜빡입니다. ",
-      after: "수청동 놀이터 옆 가로등이 밤마다 깜빡입니다.",
-      ruleId: "trim-whitespace",
-    },
-    {
-      id: "clean-2",
-      row: 18,
-      field: "접수일",
-      before: "2026. 10. 02",
-      after: "2026-10-02",
-      ruleId: "normalize-date",
-    },
-    {
-      id: "clean-3",
-      row: 31,
-      field: "신고상담내용",
-      before: "(내용 없음)",
-      after: "제외됨",
-      ruleId: "remove-empty",
-    },
-    {
-      id: "clean-4",
-      row: 40,
-      field: "경도 / 위도",
-      before: "36.0190 / 129.3435",
-      after: "129.3435 / 36.0190",
-      ruleId: "swap-coordinates",
-    },
-    {
-      id: "clean-5",
-      row: 57,
-      field: "신고상담내용",
-      before: "시스템 연결 테스트입니다.",
-      after: "제외됨",
-      ruleId: "remove-system-text",
-    },
-    {
-      id: "clean-6",
-      row: 61,
-      field: "지역",
-      before: "포항시 남구",
-      after: "포항시 남구",
-      ruleId: "trim-whitespace",
-    },
-    {
-      id: "clean-7",
-      row: 72,
-      field: "신고상담내용",
-      before: "도로 파손으로 통행이 어렵습니다.",
-      after: "도로 파손으로 통행이 어렵습니다.",
-      ruleId: "trim-whitespace",
-    },
-  ],
-  "file-virtual": [
-    {
-      id: "clean-virtual-1",
-      row: 44,
-      field: "접수일시",
-      before: "2026.10.22 09:30",
-      after: "2026-10-22",
-      ruleId: "normalize-date",
-    },
-    {
-      id: "clean-virtual-2",
-      row: 45,
-      field: "민원내용",
-      before: "같은  어린이보호구역 횡단보도에 학원 차량이 다시 정차했습니다.",
-      after: "같은 어린이보호구역 횡단보도에 학원 차량이 다시 정차했습니다.",
-      ruleId: "trim-whitespace",
-    },
-    {
-      id: "clean-virtual-3",
-      row: 46,
-      field: "지역",
-      before: "수청동",
-      after: "수청동",
-      ruleId: "trim-whitespace",
     },
   ],
 };
