@@ -15,8 +15,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Protocol, TypeVar
 
+import httpx2 as httpx
 import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI
+from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
@@ -35,6 +37,8 @@ M = TypeVar("M", bound=BaseModel)
 # fast: 대량·정형 작업(민원 속성 추출, 애매 배정, 정제 추천 검토)
 # deep: 깊은 추론(AI 분석 리포트, 카테고리 이름·정의)
 ModelTier = Literal["fast", "deep"]
+# AI 중계 서버가 받는 출입증 최소 길이(ai-relay/lib/relay.ts와 같다)
+RELAY_TOKEN_MIN_LENGTH = 32
 
 
 @dataclass
@@ -69,11 +73,14 @@ def llm_configured(settings: Settings, tier: ModelTier) -> bool:
         settings: 앱 설정
         tier: fast 또는 deep
     """
-    # 판단 기준을 생성자 한 곳에만 두려고 실제로 만들어 본다(네트워크 호출은 하지 않는다)
+    # 판단 기준을 생성자 한 곳에만 두려고 실제로 만들어 본다(네트워크 호출은 하지 않는다).
+    # Azure 직접 연결이 없으면 AI 중계 설정을 본다
     try:
         AzureChatBackend(settings, tier)
     except AppError:
-        return False
+        url = (settings.llm_relay_url or "").strip()
+        token = settings.llm_relay_token
+        return bool(url and token and len(token.get_secret_value()) >= RELAY_TOKEN_MIN_LENGTH)
     return True
 
 
@@ -344,13 +351,120 @@ class LlmClient:
         return result
 
 
-def create_llm_client(settings: Settings, tier: ModelTier) -> LlmClient:
-    """설정으로 Azure OpenAI 호출기를 만든다. 캐시는 원본 저장소의 llm-cache 폴더에 둔다.
+class RelayChatBackend:
+    """AI 중계 서버(ai-relay)를 거쳐 Azure OpenAI를 호출한다.
+
+    회사 Azure 키를 이 배포에 두지 않으려고 쓴다(사용자 결정 2026-11-02). 이 배포에는 중계 주소와
+    출입증만 두고, 키와 배포 이름은 중계 서버가 붙인다. 요청 형식은 AzureChatBackend와 같은
+    구조화 출력(response_format)이다.
+    """
+
+    def __init__(
+        self, settings: Settings, tier: ModelTier, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
+        """중계 호출기를 만든다. 주소·출입증이 없으면 AppError(LLM_NOT_CONFIGURED).
+
+        파라미터:
+            settings: LLM_RELAY_URL·LLM_RELAY_TOKEN이 담긴 앱 설정
+            tier: fast 또는 deep(중계 서버가 배포 이름을 고른다)
+            transport: HTTP 전송 계층(테스트에서 가짜로 바꿔 끼운다)
+        """
+        url = (settings.llm_relay_url or "").strip()
+        token = settings.llm_relay_token
+        # 출입증이 짧으면 중계 서버가 받지 않으므로(32자 미만) 여기서도 설정 오류로 본다
+        if not (url and token and len(token.get_secret_value()) >= RELAY_TOKEN_MIN_LENGTH):
+            raise AppError(
+                "LLM_NOT_CONFIGURED",
+                f"LLM 연결 정보가 없습니다({tier}). LLM_RELAY_URL·LLM_RELAY_TOKEN을 확인하세요.",
+                503,
+            )
+        self.deployment = f"relay-{tier}"
+        self._tier = tier
+        self._url = url
+        self._token = token
+        self._client = httpx.AsyncClient(timeout=settings.llm_timeout_seconds, transport=transport)
+
+    async def complete(self, system: str, user: str, response_model: type[BaseModel]) -> ChatReply:
+        """중계 서버로 구조화 출력 요청을 보낸다. 실패·거절·잘린 응답은 AppError로 바꾼다.
+
+        파라미터:
+            system: 시스템 지시문
+            user: 사용자 메시지(마스킹본)
+            response_model: 응답 JSON 스키마가 될 모델
+        """
+        # SDK의 parse()가 쓰는 것과 같은 엄격한 JSON 스키마를 만들어 보낸다
+        response_format = type_to_response_format_param(response_model)
+        try:
+            response = await self._client.post(
+                self._url,
+                headers={"authorization": f"Bearer {self._token.get_secret_value()}"},
+                json={
+                    "tier": self._tier,
+                    "system": system,
+                    "user": user,
+                    "response_format": response_format,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise AppError(
+                "LLM_ERROR", f"AI 중계 서버에 연결하지 못했습니다: {type(exc).__name__}", 502
+            ) from exc
+        if response.status_code != 200:
+            raise AppError(
+                "LLM_ERROR", f"AI 중계 호출에 실패했습니다(HTTP {response.status_code}).", 502
+            )
+        data = response.json()
+        if not isinstance(data, dict):
+            raise AppError("LLM_INVALID_RESPONSE", "AI 중계 응답 형식이 맞지 않습니다.", 502)
+        if data.get("refusal"):
+            raise AppError("LLM_REFUSED", "LLM이 응답을 거절했습니다.", 502)
+        # 토큰 한도로 잘렸거나 콘텐츠 필터에 막히면 JSON이 불완전하다(AzureChatBackend와 같은 코드)
+        if data.get("finishReason") in {"length", "content_filter"}:
+            raise AppError(
+                "LLM_INVALID_RESPONSE",
+                f"LLM 응답이 완성되지 않았습니다: {data.get('finishReason')}",
+                502,
+            )
+        prompt_tokens = data.get("promptTokens")
+        completion_tokens = data.get("completionTokens")
+        return ChatReply(
+            content=str(data.get("content") or ""),
+            prompt_tokens=prompt_tokens if isinstance(prompt_tokens, int) else 0,
+            completion_tokens=completion_tokens if isinstance(completion_tokens, int) else 0,
+        )
+
+    async def close(self) -> None:
+        """HTTP 연결을 닫는다.
+
+        파라미터: 없음
+        """
+        await self._client.aclose()
+
+
+def chat_backend(settings: Settings, tier: ModelTier) -> AzureChatBackend | RelayChatBackend:
+    """설정에 맞는 호출 방법. Azure 연결 정보가 있으면 직접, 없고 중계 설정이 있으면 중계로 부른다.
+
+    둘 다 없으면 AppError(LLM_NOT_CONFIGURED).
 
     파라미터:
-        settings: 앱 설정(AZURE_OPENAI_*, storage_root)
+        settings: 앱 설정
+        tier: fast 또는 deep
+    """
+    try:
+        return AzureChatBackend(settings, tier)
+    except AppError:
+        if not settings.llm_relay_url:
+            raise
+    return RelayChatBackend(settings, tier)
+
+
+def create_llm_client(settings: Settings, tier: ModelTier) -> LlmClient:
+    """설정으로 LLM 호출기를 만든다(Azure 직접 또는 AI 중계). 캐시는 원본 저장소의 llm-cache에 둔다.
+
+    파라미터:
+        settings: 앱 설정(AZURE_OPENAI_* 또는 LLM_RELAY_*, storage_root)
         tier: fast(대량·정형 작업, 예: luna) 또는 deep(깊은 추론, 예: sol)
     """
     # 캐시는 마스킹본에 대한 응답이라 원본 저장소에 둬도 개인정보가 새로 생기지 않는다.
     # API·워커가 같은 저장소를 보므로 어느 프로세스가 호출해도 캐시를 함께 쓴다
-    return LlmClient(AzureChatBackend(settings, tier), LocalStorage(settings.storage_root))
+    return LlmClient(chat_backend(settings, tier), LocalStorage(settings.storage_root))

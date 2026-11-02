@@ -4,6 +4,8 @@
 """
 
 import hashlib
+import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from pymongo import MongoClient
 
 from app.main import create_app
 from app.services.embedding import Vectors, normalize, set_embedder_override
+from app.services.llm import ChatReply, LlmClient
 from tests.conftest import TEST_URI, make_settings, requires_db
 from tests.test_analyze_flow import run_worker, upload
 
@@ -637,6 +640,67 @@ def test_reanalysis_merges_into_existing_category_instead_of_duplicating(
             assert sorted(c["categoryId"] for c in again) == sorted(c["categoryId"] for c in first)
             stats = client.get("/api/v1/complaints/stats").json()["data"]
             assert stats["assignment"]["unassigned"] == 0
+    finally:
+        with MongoClient[dict[str, object]](TEST_URI) as mongo:
+            mongo.drop_database(settings.mongodb_db_name)
+
+
+class NamingAi:
+    """민원 글의 주제 낱말로 새 카테고리 이름을 짓는 가짜 AI(분류 응답 형식)."""
+
+    deployment = "fake-ai"
+    TOPICS = {
+        "가로등": ("가로등 고장", "안전·조명"),
+        "쓰레기": ("쓰레기 방치", "환경·청소"),
+        "주차": ("불법 주정차", "교통·주정차"),
+    }
+
+    async def complete(self, system: str, user: str, response_model: type[object]) -> ChatReply:
+        """민원 줄마다 주제에 맞는 새 카테고리를 답한다.
+
+        파라미터:
+            system: 시스템 지시문
+            user: 사용자 메시지(민원 목록)
+            response_model: 응답 모델(사용하지 않음)
+        """
+        assignments, new = [], {}
+        for match in re.finditer(r"^\[(\d+)\] (.*)$", user, re.MULTILINE):
+            name, group = next(v for k, v in self.TOPICS.items() if k in match.group(2))
+            assignments.append(
+                {"index": int(match.group(1)), "category_id": None, "new_category": name}
+            )
+            new[name] = {"name": name, "group": group, "definition": f"{name} 민원"}
+        content = json.dumps({"assignments": assignments, "new_categories": list(new.values())})
+        return ChatReply(content=content, prompt_tokens=1, completion_tokens=1)
+
+
+def test_ai_classification_names_categories_and_assigns_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI가 연결되면 업로드만으로 AI가 지은 이름의 카테고리가 생기고 민원이 모두 배정된다."""
+    from app.services import complaint_handler
+
+    monkeypatch.setattr(
+        complaint_handler, "_ai_client", lambda settings: LlmClient(NamingAi(), None)
+    )
+    assert TEST_URI is not None
+    settings = make_settings(tmp_path, auto_approve_candidates=True)
+    settings.mongodb_uri = TEST_URI
+    settings.mongodb_db_name = f"datalens_test_{ObjectId()}"
+    try:
+        with TestClient(create_app(settings)) as client:
+            upload(client, "jan.csv", csv_bytes(first_month()))
+            assert run_worker(client) == 2
+
+            taxonomy = client.get("/api/v1/complaints/categories").json()["data"]["items"]
+            assert sorted((c["name"], c["group"]) for c in taxonomy) == [
+                ("가로등 고장", "안전·조명"),
+                ("불법 주정차", "교통·주정차"),
+                ("쓰레기 방치", "환경·청소"),
+            ]
+            stats = client.get("/api/v1/complaints/stats").json()["data"]
+            assert stats["assignment"]["unassigned"] == 0
+            assert sorted(item["count"] for item in stats["categoriesTotal"]) == [8, 8, 8]
     finally:
         with MongoClient[dict[str, object]](TEST_URI) as mongo:
             mongo.drop_database(settings.mongodb_db_name)
