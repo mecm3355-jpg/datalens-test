@@ -6,6 +6,7 @@
 """
 
 import asyncio
+from typing import get_args
 
 import numpy as np
 from bson import ObjectId
@@ -35,7 +36,7 @@ from app.schemas.complaint import (
     ReviewDocument,
     TaxonomyChangeDocument,
 )
-from app.schemas.complaint_analysis import Category, ComplaintRecord
+from app.schemas.complaint_analysis import Category, ComplaintRecord, Urgency
 from app.schemas.complaint_api import (
     CandidateDecisionRequest,
     CandidateDecisionResult,
@@ -45,6 +46,7 @@ from app.schemas.complaint_api import (
 from app.schemas.job import JobDocument
 from app.schemas.mongo import utc_now
 from app.schemas.taxonomy_api import (
+    AssignmentCounts,
     CategoryChangeResult,
     CategoryMergeRequest,
     CategoryPeriodCount,
@@ -52,6 +54,8 @@ from app.schemas.taxonomy_api import (
     ComplaintInsight,
     ComplaintInsights,
     ComplaintStats,
+    LabelCount,
+    PendingCandidate,
 )
 from app.services.artifacts import job_params_key
 from app.services.assignment import assign
@@ -63,6 +67,26 @@ from app.services.storage import LocalStorage
 
 # 민원 분석을 받는 확장자: 추출기(complaint_extraction)가 다루는 형식 전부
 ANALYZABLE = TABULAR_EXTENSIONS | DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS | TEXT_EXTENSIONS
+# 현황 응답 크기 제한: 행정동은 수백 개일 수 있고, 후보는 화면 위쪽 몇 개만 보여 준다
+STATS_REGION_LIMIT = 20
+STATS_CANDIDATE_LIMIT = 10
+# 긴급도 단계 순서(속성 규칙의 Urgency 값과 같다)
+URGENCY_LEVELS: tuple[str, ...] = get_args(Urgency)
+
+
+def _by_count(counts: dict[str | None, int]) -> list[LabelCount]:
+    """값별 건수를 건수 많은 순(같으면 값 이름 순)의 목록으로 바꾼다. 값 없음(None)은 맨 뒤.
+
+    파라미터:
+        counts: 값 → 건수
+    """
+    named = sorted(
+        ((k, v) for k, v in counts.items() if k is not None), key=lambda kv: (-kv[1], kv[0])
+    )
+    items = [LabelCount(label=label, count=count) for label, count in named]
+    if counts.get(None):
+        items.append(LabelCount(label=None, count=counts[None]))
+    return items
 
 
 def parse_object_id(value: str, code: str, message: str) -> ObjectId:
@@ -384,8 +408,11 @@ class ComplaintService:
             affected_count=affected,
         )
 
-    async def stats(self) -> ComplaintStats:
-        """최근 두 달의 카테고리별 민원 수를 비교한다."""
+    async def _period_comparison(self) -> tuple[str | None, str | None, list[CategoryPeriodCount]]:
+        """최근 두 달과 그 두 달의 카테고리별 민원 수를 돌려준다.
+
+        파라미터: 없음
+        """
         periods = await self._complaints.latest_periods(2)
         current_period = periods[0] if periods else None
         previous_period = periods[1] if len(periods) > 1 else None
@@ -394,10 +421,10 @@ class ComplaintService:
             await self._complaints.category_counts(previous_period) if previous_period else {}
         )
         category_ids = sorted(set(current) | set(previous))
-        return ComplaintStats(
-            current_period=current_period,
-            previous_period=previous_period,
-            categories=[
+        return (
+            current_period,
+            previous_period,
+            [
                 CategoryPeriodCount(
                     category_id=category_id,
                     current_count=current.get(category_id, 0),
@@ -407,23 +434,76 @@ class ComplaintService:
             ],
         )
 
+    async def stats(self, period: str | None = None) -> ComplaintStats:
+        """대시보드 현황: 최근 두 달 카테고리 비교, 배정 상태·그룹·지역·긴급도·월별 건수,
+        승인 대기 후보(임시 분류)와 검토 대기 건수(PRD 8.1·8.2).
+
+        파라미터:
+            period: 배정 상태·그룹·지역·긴급도를 셀 처리 월(YYYY-MM). None이면 전체 기간
+        """
+        current_period, previous_period, categories = await self._period_comparison()
+        assignment = await self._complaints.counts_by("assignStatus", period)
+        groups = await self._complaints.counts_by("group", period)
+        regions = await self._complaints.counts_by("region", period)
+        urgency = await self._complaints.counts_by("attributes.urgency", period)
+        monthly = await self._complaints.counts_by("period")
+        # 후보 목록은 큰 후보부터 온다. 화면에는 위쪽 몇 개만 보여 주고 전체 수는 따로 준다
+        candidates = await self._candidates.list_by("pending", None)
+        _, pending_reviews = await self._reviews.list_page("pending", 0, 1)
+        return ComplaintStats(
+            current_period=current_period,
+            previous_period=previous_period,
+            categories=categories,
+            period=period,
+            total=sum(assignment.values()),
+            assignment=AssignmentCounts(
+                auto=assignment.get("auto", 0),
+                ambiguous=assignment.get("ambiguous", 0),
+                unassigned=assignment.get("unassigned", 0),
+                confirmed=assignment.get("confirmed", 0),
+            ),
+            groups=_by_count(groups),
+            regions=_by_count(regions)[:STATS_REGION_LIMIT],
+            # 긴급도는 단계 순서가 의미 있으므로 건수가 아니라 단계 순으로 둔다
+            urgency=[
+                LabelCount(label=level, count=urgency[level])
+                for level in (*URGENCY_LEVELS, None)
+                if urgency.get(level)
+            ],
+            monthly=[
+                LabelCount(label=month, count=monthly[month])
+                for month in sorted(m for m in monthly if m is not None)
+            ],
+            pending_candidates=[
+                PendingCandidate(
+                    candidate_id=str(c.id),
+                    suggested_name=c.suggested_name,
+                    suggested_group=c.suggested_group,
+                    size=c.size,
+                    keywords=c.keywords,
+                )
+                for c in candidates[:STATS_CANDIDATE_LIMIT]
+            ],
+            pending_candidate_count=len(candidates),
+            pending_candidate_complaints=sum(c.size for c in candidates),
+            pending_reviews=pending_reviews,
+        )
+
     async def category_changes(self) -> list[TaxonomyChangeDocument]:
         """최근 카테고리 병합·분할 이력을 돌려준다."""
         return await self._changes.list_recent()
 
     async def insights(self) -> ComplaintInsights:
-        """증가 카테고리·긴급·재신고 현황을 규칙 기반 인사이트로 만든다."""
-        stats = await self.stats()
+        """증가 카테고리·긴급·재신고·승인 대기 후보 현황을 규칙 기반 인사이트로 만든다."""
+        _, _, categories = await self._period_comparison()
         latest = await self._categories.latest_version()
         names = {
             category.category_id: category.name
             for category in (await self._categories.list_version(latest) if latest else [])
         }
         items: list[ComplaintInsight] = []
-        if stats.categories:
-            growth = max(
-                stats.categories, key=lambda item: item.current_count - item.previous_count
-            )
+        if categories:
+            growth = max(categories, key=lambda item: item.current_count - item.previous_count)
             delta = growth.current_count - growth.previous_count
             if delta > 0:
                 items.append(
@@ -452,6 +532,17 @@ class ComplaintService:
                 ),
             ]
         )
+        # 첫 달에는 승인된 카테고리가 없어 모든 민원이 후보에 묶여 있다. 무엇을 승인할지 알린다
+        candidates = await self._candidates.list_by("pending", None)
+        if candidates:
+            items.append(
+                ComplaintInsight(
+                    type="candidates",
+                    title="승인 대기 후보",
+                    description=f"신규 카테고리 후보 {len(candidates)}개가 승인을 기다립니다.",
+                    count=sum(c.size for c in candidates),
+                )
+            )
         return ComplaintInsights(items=items)
 
     async def candidates(

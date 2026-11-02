@@ -14,6 +14,7 @@ import {
   type ApiCategoryChange,
   type ApiComplaint,
   type ApiComplaintInsight,
+  type ApiComplaintStats,
   type ApiReview,
 } from "../api/datalens";
 import { AppError } from "../api/AppError";
@@ -170,6 +171,8 @@ type ComplaintDataValue = {
   reviews: ReviewItem[];
   issues: Issue[];
   insights: ApiComplaintInsight[];
+  // 서버가 집계한 대시보드 현황(배정 상태·승인 대기 후보 등). 데모 모드나 조회 실패면 null
+  stats: ApiComplaintStats | null;
   mappings: Mapping[];
   categoryById: (id: string | null) => Category | undefined;
   decideCandidate: (id: string, decision: CandidateDecision, mergedIntoId?: string) => Promise<void>;
@@ -196,13 +199,14 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
   const [candidates, setCandidates] = useState<Candidate[]>(DATA_MODE === "demo" ? demoCandidates : []);
   const [reviews, setReviews] = useState<ReviewItem[]>(DATA_MODE === "demo" ? demoReviews : []);
   const [insights, setInsights] = useState<ApiComplaintInsight[]>([]);
+  const [stats, setStats] = useState<ApiComplaintStats | null>(null);
   const [mappings, setMappings] = useState<Mapping[]>([]);
 
   const load = useCallback(async () => {
     if (DATA_MODE !== "api") return;
     setLoading(true);
     try {
-      const [complaintResult, taxonomy, candidateItems, reviewItems, stats, changeItems, insightItems] = await Promise.all([
+      const [complaintResult, taxonomy, candidateItems, reviewItems, serverStats, changeItems, insightItems] = await Promise.all([
         datalensApi.complaints(),
         datalensApi.taxonomy().catch(() => ({ version: 0, items: [] })),
         datalensApi.candidates().catch(() => []),
@@ -227,10 +231,10 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
           previousCounts.set(item.categoryId, (previousCounts.get(item.categoryId) ?? 0) + 1);
         }
       });
-      if (stats) {
+      if (serverStats) {
         currentCounts.clear();
         previousCounts.clear();
-        stats.categories.forEach((item) => {
+        serverStats.categories.forEach((item) => {
           currentCounts.set(item.categoryId, item.currentCount);
           previousCounts.set(item.categoryId, item.previousCount);
         });
@@ -242,6 +246,7 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
       setReviews(reviewItems.flatMap((item) => toReview(item) ?? []));
       setMappings(toMappings(changeItems));
       setInsights(insightItems);
+      setStats(serverStats);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "민원 데이터를 불러오지 못했습니다.");
@@ -271,6 +276,7 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
     reviews,
     issues: DATA_MODE === "api" ? deriveIssues(complaints) : demoIssues,
     insights,
+    stats,
     mappings,
     categoryById: (id) => categories.find((category) => category.categoryId === id),
     decideCandidate: async (id, decision, mergedIntoId) => {
@@ -300,7 +306,7 @@ export function ComplaintDataProvider({ children }: { children: ReactNode }) {
       await datalensApi.splitCategory(input);
       await load();
     },
-  }), [candidates, categories, complaints, error, insights, load, loading, mappings, reviews, taxonomyVersion]);
+  }), [candidates, categories, complaints, error, insights, load, loading, mappings, reviews, stats, taxonomyVersion]);
 
   return <ComplaintDataContext.Provider value={value}>{children}</ComplaintDataContext.Provider>;
 }

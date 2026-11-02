@@ -55,10 +55,10 @@ async def process_queue_job(
         raise AppError("INVALID_JOB_ID", "작업 ID 형식이 올바르지 않습니다.", 422)
 
     # 분석기 모듈은 무거우므로 일반 API cold start에는 포함하지 않고 Queue 요청에서만 불러온다.
-    from app.services.job_handlers import HANDLERS
+    from app.services.job_handlers import FOLLOW_UPS, HANDLERS
     from app.services.job_runner import JobRunner
 
-    processed = await JobRunner(mongo.db, settings, HANDLERS).run_job(
+    processed = await JobRunner(mongo.db, settings, HANDLERS, FOLLOW_UPS).run_job(
         ObjectId(job_id),
         recover_stale=delivery.delivery_count > 1,
         retry_unexpected=delivery.delivery_count < 3,

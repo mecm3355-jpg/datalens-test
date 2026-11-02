@@ -70,18 +70,23 @@ MAPPING = {"content": "내용", "receivedAt": "접수일", "region": "행정동"
 def analyze(client: TestClient, file_id: str) -> dict[str, object]:
     """규칙 방식 민원 분석을 실행하고 민원 분석 요약(analysis.complaint)을 돌려준다.
 
+    업로드 진단 뒤 자동으로 시작된 분석이 있으면 그 결과를, 없으면 MAPPING으로 분석을 요청한다.
+
     파라미터:
         client: 테스트 클라이언트
         file_id: 파일 ID
     """
-    run_worker(client)  # 업로드 때 만든 추출·진단 작업을 먼저 끝낸다
-    res = client.post(
-        f"/api/v1/files/{file_id}/analysis",
-        json={"type": "complaint", "mapping": MAPPING, "attributeMethod": "rule"},
-    )
-    assert res.status_code == 202, res.text
-    run_worker(client)
-    job = client.get(f"/api/v1/jobs/{res.json()['data']['jobId']}").json()["data"]
+    run_worker(client)  # 추출·진단과, 본문 열을 찾았으면 자동 민원 분석까지 끝낸다
+    job_id = client.get(f"/api/v1/files/{file_id}").json()["data"]["lastJobId"]
+    if client.get(f"/api/v1/jobs/{job_id}").json()["data"]["type"] != "complaint_analysis":
+        res = client.post(
+            f"/api/v1/files/{file_id}/analysis",
+            json={"type": "complaint", "mapping": MAPPING, "attributeMethod": "rule"},
+        )
+        assert res.status_code == 202, res.text
+        run_worker(client)
+        job_id = res.json()["data"]["jobId"]
+    job = client.get(f"/api/v1/jobs/{job_id}").json()["data"]
     assert job["status"] == "completed", job
     result = client.get(f"/api/v1/files/{file_id}/analysis").json()["data"]
     summary: dict[str, object] = result["analysis"]["complaint"]
@@ -459,3 +464,69 @@ def test_category_merge_split_stats_and_change_history(db_client: TestClient) ->
     insights = db_client.get("/api/v1/complaints/insights")
     assert insights.status_code == 200
     assert {item["type"] for item in insights.json()["data"]["items"]} >= {"urgent", "repeat"}
+
+
+def test_upload_starts_complaint_analysis_automatically(db_client: TestClient) -> None:
+    """업로드 진단이 끝나면 매핑 추천으로 민원 분석까지 이어진다. 재진단은 다시 분석하지 않는다."""
+    file_id = upload(db_client, "auto.csv", csv_bytes(first_month()))
+
+    assert run_worker(db_client) == 2  # 추출·진단 → 민원 분석
+
+    detail = db_client.get(f"/api/v1/files/{file_id}").json()["data"]
+    job = db_client.get(f"/api/v1/jobs/{detail['lastJobId']}").json()["data"]
+    assert (job["type"], job["status"]) == ("complaint_analysis", "completed")
+    complaints = db_client.get(f"/api/v1/complaints?fileId={file_id}&limit=1").json()["data"]
+    assert complaints["total"] == 24
+
+    assert db_client.post(f"/api/v1/files/{file_id}/process").status_code == 202
+    assert run_worker(db_client) == 1
+
+
+def test_upload_without_content_column_waits_for_mapping(db_client: TestClient) -> None:
+    """본문·제목 열을 찾지 못한 표는 자동으로 분석하지 않는다."""
+    file_id = upload(db_client, "people.csv", "이름,나이\n김,30\n이,40\n".encode())
+
+    assert run_worker(db_client) == 1
+
+    detail = db_client.get(f"/api/v1/files/{file_id}").json()["data"]
+    assert detail["status"] == "completed"
+    job = db_client.get(f"/api/v1/jobs/{detail['lastJobId']}").json()["data"]
+    assert job["type"] == "analyze"
+
+
+def test_stats_show_pending_candidates_before_first_approval(db_client: TestClient) -> None:
+    """첫 달은 배정이 없어도 승인 대기 후보로 현황이 보이고, 승인하면 배정 건수가 바뀐다."""
+    upload(db_client, "jan.csv", csv_bytes(first_month()))
+    run_worker(db_client)
+
+    stats = db_client.get("/api/v1/complaints/stats").json()["data"]
+    assert stats["total"] == 24
+    assert stats["assignment"] == {"auto": 0, "ambiguous": 0, "unassigned": 24, "confirmed": 0}
+    assert stats["monthly"] == [{"label": "2026-01", "count": 24}]
+    assert {(r["label"], r["count"]) for r in stats["regions"]} == {
+        ("수청동", 8),
+        ("중앙동", 8),
+        ("채운동", 8),
+    }
+    assert (stats["pendingCandidateCount"], stats["pendingCandidateComplaints"]) == (3, 24)
+    assert [c["size"] for c in stats["pendingCandidates"]] == [8, 8, 8]
+
+    insights = db_client.get("/api/v1/complaints/insights").json()["data"]["items"]
+    pending = next(item for item in insights if item["type"] == "candidates")
+    assert pending["count"] == 24
+
+    lights = candidate_for(db_client, "가로등")
+    res = db_client.post(
+        f"/api/v1/complaints/categories/candidates/{lights['candidateId']}/decision",
+        json={"decision": "approved", "name": "가로등 고장", "group": "안전·조명"},
+    )
+    assert res.status_code == 200, res.text
+
+    stats = db_client.get("/api/v1/complaints/stats").json()["data"]
+    assert stats["assignment"]["unassigned"] == 16
+    assert stats["groups"][0] == {"label": "안전·조명", "count": 8}
+    assert stats["pendingCandidateCount"] == 2
+
+    other_month = db_client.get("/api/v1/complaints/stats?period=2026-02").json()["data"]
+    assert (other_month["period"], other_month["total"]) == ("2026-02", 0)
+    assert db_client.get("/api/v1/complaints/stats?period=2026-2").status_code == 422

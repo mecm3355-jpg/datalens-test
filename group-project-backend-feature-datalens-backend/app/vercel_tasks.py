@@ -7,7 +7,7 @@ from vercel.queue import Message, subscribe
 from app.core.config import get_settings
 from app.core.database import Mongo
 from app.repositories.indexes import ensure_indexes
-from app.services.job_handlers import HANDLERS
+from app.services.job_handlers import FOLLOW_UPS, HANDLERS
 from app.services.job_runner import JobRunner
 
 
@@ -25,7 +25,7 @@ async def process_job(message: Message[JobMessage]) -> None:
     try:
         await ensure_indexes(mongo.db)
         delivery_count = message.metadata.delivery_count
-        await JobRunner(mongo.db, settings, HANDLERS).run_job(
+        await JobRunner(mongo.db, settings, HANDLERS, FOLLOW_UPS).run_job(
             ObjectId(message.payload.job_id),
             recover_stale=delivery_count > 1,
             retry_unexpected=delivery_count < 3,

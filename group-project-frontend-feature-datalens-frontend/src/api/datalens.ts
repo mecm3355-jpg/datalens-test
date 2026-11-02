@@ -225,14 +225,37 @@ export type ApiReview = {
   complaint: ApiComplaint | null;
 };
 
+/** 값 하나와 건수. 값이 없는 민원은 label이 null입니다. */
+export type ApiLabelCount = { label: string | null; count: number };
+
+/** 정식 카테고리가 되기 전, 승인을 기다리는 후보(임시 분류)입니다. */
+export type ApiPendingCandidate = {
+  candidateId: string;
+  suggestedName: string;
+  suggestedGroup: string | null;
+  size: number;
+  keywords: string[];
+};
+
 export type ApiComplaintStats = {
   currentPeriod: string | null;
   previousPeriod: string | null;
   categories: Array<{ categoryId: string; currentCount: number; previousCount: number }>;
+  period: string | null;
+  total: number;
+  assignment: { auto: number; ambiguous: number; unassigned: number; confirmed: number };
+  groups: ApiLabelCount[];
+  regions: ApiLabelCount[];
+  urgency: ApiLabelCount[];
+  monthly: ApiLabelCount[];
+  pendingCandidates: ApiPendingCandidate[];
+  pendingCandidateCount: number;
+  pendingCandidateComplaints: number;
+  pendingReviews: number;
 };
 
 export type ApiComplaintInsight = {
-  type: "growth" | "urgent" | "repeat";
+  type: "growth" | "urgent" | "repeat" | "candidates";
   title: string;
   description: string;
   count: number;

@@ -11,7 +11,7 @@ import logging
 from app.core.config import get_settings
 from app.core.database import Mongo
 from app.repositories.indexes import ensure_indexes
-from app.services.job_handlers import HANDLERS
+from app.services.job_handlers import FOLLOW_UPS, HANDLERS
 from app.services.job_runner import JobRunner
 
 
@@ -26,7 +26,7 @@ async def main() -> None:
         # 워커가 API보다 먼저 떠도 작업 선점 조회에 쓰는 인덱스가 있도록 여기서도 확인한다
         await ensure_indexes(mongo.db)
         # 멈춤 신호(Event)는 쓰지 않고 Ctrl+C(KeyboardInterrupt)로 끈다. 테스트는 Event로 멈춘다
-        await JobRunner(mongo.db, settings, HANDLERS).run_forever(asyncio.Event())
+        await JobRunner(mongo.db, settings, HANDLERS, FOLLOW_UPS).run_forever(asyncio.Event())
     finally:
         await mongo.close()
 

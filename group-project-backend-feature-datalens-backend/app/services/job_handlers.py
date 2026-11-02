@@ -6,6 +6,7 @@
 from app.schemas.complaint import COMPLAINT_ANALYSIS_JOB_TYPE
 from app.schemas.job import ANALYZE_JOB_TYPE, CLEAN_JOB_TYPE, MERGE_JOB_TYPE, REPORT_JOB_TYPE
 from app.services.analyze_handler import analyze
+from app.services.auto_analysis import start_complaint_analysis
 from app.services.clean_handler import clean
 from app.services.complaint_handler import analyze_complaints
 from app.services.job_runner import JobHandler
@@ -20,4 +21,9 @@ HANDLERS: dict[str, JobHandler] = {
     REPORT_JOB_TYPE: report,
     MERGE_JOB_TYPE: merge,
     COMPLAINT_ANALYSIS_JOB_TYPE: analyze_complaints,
+}
+
+# 작업이 완료된 뒤 이어서 할 일. 업로드 진단이 끝나면 표 파일의 민원 분석을 자동으로 시작한다
+FOLLOW_UPS: dict[str, JobHandler] = {
+    ANALYZE_JOB_TYPE: start_complaint_analysis,
 }

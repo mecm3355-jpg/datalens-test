@@ -118,14 +118,23 @@ async def list_category_changes(service: Service) -> ApiResponse[CategoryChangeL
 
 
 @router.get("/stats", response_model=ApiResponse[ComplaintStats])
-async def get_complaint_stats(service: Service) -> ApiResponse[ComplaintStats]:
-    """최근 두 기간의 카테고리별 민원 수를 조회한다."""
-    return ok(await service.stats())
+async def get_complaint_stats(
+    service: Service,
+    period: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
+) -> ApiResponse[ComplaintStats]:
+    """대시보드 현황: 최근 두 기간 카테고리 비교, 배정 상태·그룹·지역·긴급도·월별 건수,
+    승인 대기 후보(임시 분류)와 검토 대기 건수.
+
+    파라미터:
+        service: 민원 분석 서비스
+        period: 배정 상태·그룹·지역·긴급도를 셀 처리 월(YYYY-MM). 생략하면 전체 기간
+    """
+    return ok(await service.stats(period))
 
 
 @router.get("/insights", response_model=ApiResponse[ComplaintInsights])
 async def get_complaint_insights(service: Service) -> ApiResponse[ComplaintInsights]:
-    """증가·긴급·재신고 규칙 기반 인사이트를 조회한다."""
+    """증가·긴급·재신고·승인 대기 후보 규칙 기반 인사이트를 조회한다."""
     return ok(await service.insights())
 
 
