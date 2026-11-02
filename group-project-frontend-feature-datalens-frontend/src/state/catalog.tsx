@@ -13,7 +13,7 @@ import {
   type AssignmentSummary,
   type Surge,
 } from "../lib/derive";
-import { ApiError, assignFileCategory, uploadFile } from "../lib/api";
+import { ApiError, assignFileCategory, deleteFile, uploadFile } from "../lib/api";
 import { loadServer, sendCandidateDecision, sendReview, startAnalysis, type ServerData } from "../lib/remote";
 import type {
   Candidate,
@@ -64,6 +64,8 @@ type CatalogValue = {
   requestAnalysis: (fileId: string, mapping: Partial<Record<string, MappingField>>, splitRule?: string) => Promise<void>;
   // 파일의 민원 전체를 한 카테고리로 확정한다(관리자만, 서버에 저장)
   assignFileCategory: (fileId: string, categoryId: string) => Promise<void>;
+  // 파일과 관련 결과를 삭제한다. 성공하면 true, 실패하면 오류를 화면에 띄우고 false
+  deleteFile: (fileId: string) => Promise<boolean>;
   categoryById: (id: string | null | undefined) => Category | undefined;
   complaintById: (id: string) => Complaint | undefined;
   issueById: (id: string) => Issue | undefined;
@@ -191,6 +193,21 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       confirmReview: (id, categoryId) => run(() => sendReview(id, categoryId)),
       requestAnalysis: (fileId, mapping, splitRule) =>
         run(() => startAnalysis(fileId, mapping, splitRule).then(() => undefined)),
+      deleteFile: async (fileId) => {
+        // 삭제 뒤 화면을 옮길지 정해야 하므로 run과 달리 성공 여부를 돌려준다
+        setBusy(true);
+        setError(null);
+        try {
+          await deleteFile(fileId);
+          await reload();
+          return true;
+        } catch (reason: unknown) {
+          setError(messageOf(reason));
+          return false;
+        } finally {
+          setBusy(false);
+        }
+      },
       assignFileCategory: (fileId, categoryId) =>
         run(() => assignFileCategory(fileId, categoryId).then(() => undefined)),
       categoryById,

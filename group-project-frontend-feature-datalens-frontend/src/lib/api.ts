@@ -158,6 +158,14 @@ export async function logout(): Promise<void> {
 }
 
 /**
+ * 파일과 관련 결과(진단·분석·민원·검토·작업·원본)를 삭제한다. 되돌릴 수 없다.
+ * @param fileId 파일 ID
+ */
+export async function deleteFile(fileId: string): Promise<void> {
+  await apiRequest(endpoints.file(fileId), { method: "DELETE" });
+}
+
+/**
  * 파일의 민원 전체를 한 카테고리로 확정한다(관리자만).
  * @param fileId 파일 ID
  * @param categoryId 확정할 카테고리 ID

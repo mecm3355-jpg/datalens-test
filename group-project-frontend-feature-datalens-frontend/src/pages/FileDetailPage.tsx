@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
@@ -29,7 +29,8 @@ export function FileDetailPage() {
 }
 
 function FileDetail({ fileId }: { fileId: string }) {
-  const { files, complaintsByFile, requestAnalysis, status, busy } = useCatalog();
+  const { files, complaintsByFile, requestAnalysis, deleteFile, status, busy } = useCatalog();
+  const navigate = useNavigate();
   const file = files.find((item) => item.id === fileId);
   const [columns, setColumns] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>([]);
@@ -130,13 +131,32 @@ function FileDetail({ fileId }: { fileId: string }) {
         title={file.originalName}
         lede={`${formatBytes(file.sizeBytes)} · ${file.rowCount === null ? "행 수 없음" : `${formatNumber(file.rowCount)}행`} · ${formatDate(file.createdAt)}`}
         actions={
-          <Button
-            onClick={() => void requestAnalysis(file.id, mapping, defaultSplitRule(file))}
-            // 업로드 뒤 서버가 자동 분석을 이어 가는 동안(대기 포함) 다시 누르면 409가 난다
-            disabled={busy || file.status === "processing" || file.status === "queued"}
-          >
-            {job?.status === "completed" ? "다시 분석" : "분석 실행"}
-          </Button>
+          <>
+            <Button
+              onClick={() => void requestAnalysis(file.id, mapping, defaultSplitRule(file))}
+              // 업로드 뒤 서버가 자동 분석을 이어 가는 동안(대기 포함) 다시 누르면 409가 난다
+              disabled={busy || file.status === "processing" || file.status === "queued"}
+            >
+              {job?.status === "completed" ? "다시 분석" : "분석 실행"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                // 민원·검토 기록까지 함께 지워지고 되돌릴 수 없으므로 한 번 더 묻는다
+                const ok = window.confirm(
+                  `'${file.originalName}' 파일을 삭제할까요?
+이 파일에서 나온 민원·분석 결과·검토 기록도 함께 지워지며 되돌릴 수 없습니다.`,
+                );
+                if (!ok) return;
+                void deleteFile(file.id).then((deleted) => {
+                  if (deleted) navigate("/files", { replace: true });
+                });
+              }}
+              disabled={busy}
+            >
+              파일 삭제
+            </Button>
+          </>
         }
       />
 
