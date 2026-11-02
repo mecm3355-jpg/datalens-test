@@ -113,6 +113,8 @@ class ComplaintStats(ApiModel):
     assignment: AssignmentCounts
     # 상위 그룹·행정동·긴급도는 건수 많은 순, 월별은 오래된 달부터(값 없는 민원은 label None)
     groups: list[LabelCount]
+    # 카테고리 ID별 건수(값 없음 = 미분류는 label None). 대시보드의 카테고리별 건수
+    categories_total: list[LabelCount]
     regions: list[LabelCount]
     urgency: list[LabelCount]
     monthly: list[LabelCount]

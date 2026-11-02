@@ -295,6 +295,20 @@ async function fetchReviews(): Promise<{ reviews: ReviewItem[]; complaints: ApiC
   return { reviews, complaints };
 }
 
+/** 값 하나와 건수(값 없음은 label null). */
+export type LabelCount = { label: string | null; count: number };
+
+/** 서버 집계 현황(GET /complaints/stats)에서 대시보드가 쓰는 부분. */
+export type ComplaintStats = {
+  total: number;
+  assignment: { auto: number; ambiguous: number; unassigned: number; confirmed: number };
+  // 카테고리 ID별 건수. label null은 아직 카테고리가 없는(미분류) 민원
+  categoriesTotal: LabelCount[];
+  pendingCandidates: Array<{ candidateId: string; suggestedName: string; suggestedGroup: string | null; size: number }>;
+  pendingCandidateCount: number;
+  pendingCandidateComplaints: number;
+};
+
 export type ServerData = {
   files: DataFile[];
   complaints: Complaint[];
@@ -303,6 +317,8 @@ export type ServerData = {
   candidates: Candidate[];
   reviews: ReviewItem[];
   truncated: boolean;
+  // 서버 집계. 불러오지 못하면 null(다른 화면은 계속 쓸 수 있게)
+  stats: ComplaintStats | null;
 };
 
 export async function loadServer(): Promise<ServerData> {
@@ -313,6 +329,7 @@ export async function loadServer(): Promise<ServerData> {
     fetchCandidates(),
     fetchReviews(),
   ]);
+  const stats = await apiRequest<ComplaintStats>(endpoints.complaintStats).catch(() => null);
 
   const complaintRows = complaintPage.items;
   const seen = new Set(complaintRows.map((item) => item.complaintId));
@@ -332,6 +349,7 @@ export async function loadServer(): Promise<ServerData> {
     candidates,
     reviews: reviewPack.reviews,
     truncated: complaintPage.total > complaintRows.length,
+    stats,
   };
 }
 

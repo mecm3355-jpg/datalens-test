@@ -205,7 +205,7 @@ function FileDetail({ fileId }: { fileId: string }) {
 
       {file.fileCategory !== "tabular" ? (
         <p className="notice">
-          이 파일은 글자만 추출됩니다. 정제 파일(CSV)은 표 형식(CSV, XLSX)만 만듭니다.
+          이 파일은 글자를 뽑아 민원별로 나눠 분석합니다.
         </p>
       ) : null}
 

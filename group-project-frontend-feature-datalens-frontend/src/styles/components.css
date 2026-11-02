@@ -1196,3 +1196,113 @@ td.num {
   gap: var(--space-xs);
   margin-top: var(--space-xs);
 }
+
+/* 대시보드 카테고리별 건수 */
+.category-counts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.category-count {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) 2fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.category-count-bar {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-hairline-on-dark);
+  overflow: hidden;
+}
+
+.category-count-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+}
+
+.category-count-value {
+  min-width: 56px;
+  text-align: right;
+}
+
+/* 진행 팝업 */
+.progress-dialog {
+  width: min(560px, 100%);
+}
+
+.progress-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-md);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.progress-name {
+  margin: 0 0 var(--space-xs);
+  font-weight: 600;
+  color: var(--color-on-dark);
+  overflow-wrap: anywhere;
+}
+
+.progress-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-xxs);
+}
+
+.progress-step {
+  padding: var(--space-xxs) var(--space-xs);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  text-align: center;
+  background: var(--color-canvas-dark);
+  color: var(--color-muted);
+}
+
+.progress-step-done {
+  background: rgba(14, 203, 129, 0.15);
+  color: var(--color-trading-up);
+}
+
+.progress-step-current {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: 600;
+  animation: progress-pulse 1.4s ease-in-out infinite;
+}
+
+.progress-stopped .progress-step-current,
+.progress-failed .progress-step-current {
+  animation: none;
+}
+
+.progress-detail {
+  margin: var(--space-xs) 0 0;
+  font-size: 13px;
+  color: var(--color-muted-strong);
+}
+
+@keyframes progress-pulse {
+  50% { opacity: 0.7; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-step-current { animation: none; }
+}
+
+@media (max-width: 480px) {
+  .category-count { grid-template-columns: 1fr auto; }
+  .category-count-bar { display: none; }
+}

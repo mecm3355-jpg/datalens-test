@@ -1,52 +1,56 @@
 import { describe, expect, it } from "vitest";
-import { phaseOf, stageNotice } from "./stages";
+import { AUTO_START_WAIT_MS, nextStep, type ServerState } from "./stages";
 
-const csv = { id: "f1", originalName: "민원.csv", fileCategory: "tabular" as const };
-const pdf = { id: "f2", originalName: "목록.pdf", fileCategory: "document" as const };
-const image = { id: "f3", originalName: "사진.jpg", fileCategory: "image" as const };
-const none = { complaintCount: 0, pendingCandidates: 0, error: null };
+const base: ServerState = {
+  status: "processing",
+  jobId: "j1",
+  jobType: "analyze",
+  jobError: null,
+  fileCategory: "tabular",
+  complaintCount: 0,
+  pendingCandidates: 0,
+};
 
-describe("처리 단계", () => {
-  it("작업 종류와 상태로 단계를 구한다", () => {
-    expect(phaseOf("queued", "analyze")).toBe("diagnosing");
-    expect(phaseOf("processing", "complaint_analysis")).toBe("analyzing");
-    expect(phaseOf("completed", "analyze")).toBe("diagnosed");
-    expect(phaseOf("completed", "complaint_analysis")).toBe("analyzed");
-    expect(phaseOf("failed", null)).toBe("failed");
-    // 미지원 형식은 작업이 없어 알릴 단계가 없다
-    expect(phaseOf("completed", null)).toBeNull();
-  });
-});
+describe("처리 단계 판단", () => {
+  it("진단 → 민원 분석 → 완료 순서로 단계를 정한다", () => {
+    expect(nextStep(base, null, null, 0).step).toBe("diagnosing");
+    expect(nextStep({ ...base, jobId: "j2", jobType: "complaint_analysis" }, null, null, 0).step).toBe("analyzing");
 
-describe("단계 안내", () => {
-  it("분석이 끝나고 승인 대기 후보가 있으면 후보 승인으로 안내한다", () => {
-    const notice = stageNotice(csv, "analyzed", { complaintCount: 24, pendingCandidates: 3, error: null });
-
-    expect(notice.message).toContain("민원 24건");
-    expect(notice.message).toContain("후보가 3개");
-    expect(notice.link).toEqual({ to: "/categories/candidates", label: "후보 승인하러 가기" });
-  });
-
-  it("후보가 없으면 민원 목록으로 안내한다", () => {
-    expect(stageNotice(csv, "analyzed", { ...none, complaintCount: 5 }).link?.to).toBe("/complaints");
+    const done = nextStep(
+      { ...base, status: "completed", jobId: "j2", jobType: "complaint_analysis", complaintCount: 24, pendingCandidates: 3 },
+      null,
+      null,
+      0,
+    );
+    expect(done.step).toBe("done");
+    expect(done.detail).toContain("민원 24건");
+    expect(done.detail).toContain("승인 대기 후보 3개");
   });
 
-  it("자동 분석이 이어지지 않은 이유를 형식별로 알린다", () => {
-    expect(stageNotice(csv, "diagnosed", none).message).toContain("본문 열");
-    expect(stageNotice(pdf, "diagnosed", none).message).toContain("서식");
-    expect(stageNotice(image, "diagnosed", none).message).toContain("민원 분석을 하지 않습니다");
-    expect(stageNotice(csv, "diagnosed", none).link?.to).toBe("/files/f1");
+  it("진단만 끝나면 자동 분석을 잠시 기다렸다가 멈춘 이유를 알린다", () => {
+    const completed = { ...base, status: "completed" as const };
+    expect(nextStep(completed, null, null, 1_000)).toEqual({ step: "diagnosing", detail: "", waitingSince: 1_000 });
+
+    const stopped = nextStep(completed, null, 1_000, 1_000 + AUTO_START_WAIT_MS);
+    expect(stopped.step).toBe("stopped");
+    expect(stopped.detail).toContain("본문 열");
+    expect(nextStep({ ...completed, fileCategory: "document" }, null, 0, AUTO_START_WAIT_MS).detail).toContain("서식");
   });
 
-  it("진단 시작 안내는 자동 분석 여부를 구분한다", () => {
-    expect(stageNotice(csv, "diagnosing", none).message).toContain("자동으로 넘어갑니다");
-    expect(stageNotice(image, "diagnosing", none).message).not.toContain("자동으로 넘어갑니다");
+  it("민원 분석 대상이 아닌 형식은 진단으로 끝난다", () => {
+    expect(nextStep({ ...base, status: "completed", fileCategory: "image" }, null, null, 0).step).toBe("done");
+    // 미지원 형식은 작업 없이 바로 끝난다
+    const other = { ...base, status: "completed" as const, jobId: null, jobType: null, fileCategory: "other" as const };
+    expect(nextStep(other, null, null, 0).step).toBe("done");
   });
 
-  it("실패하면 서버 오류 메시지를 보여 준다", () => {
-    const notice = stageNotice(pdf, "failed", { ...none, error: "원본 파일이 저장소에 없습니다." });
+  it("다시 분석할 때 이전 작업은 무시하고 분석 단계로 둔다", () => {
+    const previous = { ...base, status: "completed" as const, jobType: "complaint_analysis" };
+    expect(nextStep(previous, "j1", null, 0).step).toBe("analyzing");
+  });
 
-    expect(notice.tone).toBe("error");
-    expect(notice.message).toContain("원본 파일이 저장소에 없습니다.");
+  it("실패하면 서버 오류 메시지를 담는다", () => {
+    const failed = nextStep({ ...base, status: "failed", jobError: "원본 파일이 저장소에 없습니다." }, null, null, 0);
+    expect(failed).toEqual({ step: "failed", detail: "원본 파일이 저장소에 없습니다.", waitingSince: null });
   });
 });
