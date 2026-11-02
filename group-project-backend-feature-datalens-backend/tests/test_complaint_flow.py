@@ -573,3 +573,29 @@ def test_file_category_confirms_all_complaints_of_file(db_client: TestClient) ->
     run_worker(db_client)
     empty = db_client.post(f"/api/v1/files/{other}/category", json={"categoryId": category_id})
     assert (empty.status_code, empty.json()["error"]["code"]) == (409, "NO_COMPLAINTS")
+
+
+def test_new_candidates_are_approved_automatically(tmp_path: Path) -> None:
+    """자동 승인을 켜면 업로드만으로 후보가 카테고리가 되고 민원이 카테고리별로 배정된다."""
+    assert TEST_URI is not None
+    settings = make_settings(tmp_path, auto_approve_candidates=True)
+    settings.mongodb_uri = TEST_URI
+    settings.mongodb_db_name = f"datalens_test_{ObjectId()}"
+    try:
+        with TestClient(create_app(settings)) as client:
+            upload(client, "jan.csv", csv_bytes(first_month()))
+            assert run_worker(client) == 2  # 진단 → 민원 분석(후보 자동 승인 포함)
+
+            pending = client.get("/api/v1/complaints/categories/candidates").json()["data"]
+            assert pending["items"] == []
+            taxonomy = client.get("/api/v1/complaints/categories").json()["data"]
+            assert len(taxonomy["items"]) == 3
+            # LLM이 없으므로 상위 그룹은 핵심어·대표 민원으로 골랐다
+            assert {item["group"] for item in taxonomy["items"]} >= {"안전·조명", "환경·청소"}
+
+            stats = client.get("/api/v1/complaints/stats").json()["data"]
+            assert stats["assignment"]["unassigned"] == 0
+            assert sorted(item["count"] for item in stats["categoriesTotal"]) == [8, 8, 8]
+    finally:
+        with MongoClient[dict[str, object]](TEST_URI) as mongo:
+            mongo.drop_database(settings.mongodb_db_name)

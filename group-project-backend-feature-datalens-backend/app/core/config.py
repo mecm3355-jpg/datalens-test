@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # 이 시간보다 오래 processing에 머문 작업은 워커가 멈춘 것으로 보고 실패 처리
     worker_poll_seconds: float = 1.0
     job_timeout_seconds: int = 60 * 60
+    # 민원 분석이 만든 신규 후보를 사람 승인 없이 바로 카테고리로 만든다(사용자 결정 2026-11-02).
+    # 끄면 PRD 4장 6단계대로 담당자가 후보를 승인해야 카테고리가 생긴다
+    auto_approve_candidates: bool = True
     # local은 별도 polling worker, vercel_queue는 작업 생성 즉시 Vercel Queue로 발행한다.
     job_dispatch_mode: Literal["local", "vercel_queue"] = "local"
     # 비공개 Queue worker 서비스가 내부 작업 실행 API를 호출할 때 검증하는 공유 비밀.

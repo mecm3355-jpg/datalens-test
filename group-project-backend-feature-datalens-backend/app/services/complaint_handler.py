@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import logging
 from collections import Counter
 from datetime import UTC, datetime
 
@@ -42,6 +43,7 @@ from app.schemas.result import QualityIssue, QualityResult, ResultDocument
 from app.services.artifacts import job_params_key
 from app.services.assignment import assign
 from app.services.attributes import extract_by_llm, extract_by_rules, refine_with_prototypes
+from app.services.auto_analysis import approve_new_candidates
 from app.services.complaint_extraction import RawComplaint, extract_complaints
 from app.services.complaint_vectors import load_vectors, save_vectors
 from app.services.discovery import discover
@@ -52,6 +54,8 @@ from app.services.llm import LlmClient, create_llm_client, llm_configured
 from app.services.masking import mask_text
 from app.services.naming import NameSuggestion, suggest_name
 from app.services.ocr_setup import ocr_options
+
+logger = logging.getLogger(__name__)
 
 # 새 후보와 이전 후보의 소속 민원이 이 비율(Jaccard) 이상 겹치면 이름 초안을 이어 쓴다
 REUSE_OVERLAP = 0.5
@@ -553,3 +557,10 @@ async def analyze_complaints(ctx: JobContext) -> None:
             ai=ai,
         )
     )
+    # 이번 분석이 만든 후보를 바로 카테고리로 만든다(설정으로 끌 수 있음). 작업이 끝나기 전에 해서
+    # 완료를 본 화면이 곧바로 카테고리별 건수를 보게 한다. 승인이 실패해도 분석 결과는 그대로 둔다
+    await ctx.report("auto_approve", 95)
+    try:
+        await approve_new_candidates(ctx)
+    except AppError as exc:
+        logger.warning("신규 후보 자동 승인 실패: job=%s code=%s", ctx.job.id, exc.code)
