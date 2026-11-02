@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # 민원 분석이 만든 신규 후보를 사람 승인 없이 바로 카테고리로 만든다(사용자 결정 2026-11-02).
     # 끄면 PRD 4장 6단계대로 담당자가 후보를 승인해야 카테고리가 생긴다
     auto_approve_candidates: bool = True
+    # AI가 연결돼 있으면(AZURE_OPENAI_* 또는 LLM_RELAY_*) 이번 파일의 미배정 민원을 AI로 분류하고
+    # 새 카테고리를 짓는다(사용자 결정 2026-11-02, 마스킹본만 전송). 끄면 단어 벡터 군집화만 쓴다
+    ai_classification: bool = True
     # local은 별도 polling worker, vercel_queue는 작업 생성 즉시 Vercel Queue로 발행한다.
     job_dispatch_mode: Literal["local", "vercel_queue"] = "local"
     # 비공개 Queue worker 서비스가 내부 작업 실행 API를 호출할 때 검증하는 공유 비밀.
@@ -70,6 +73,10 @@ class Settings(BaseSettings):
     azure_openai_deployment_fast: str | None = None
     azure_openai_deployment_deep: str | None = None
     llm_timeout_seconds: float = 120.0
+    # AI 중계 서버(ai-relay). 회사 Azure 키를 이 배포에 두지 않을 때, 키는 중계 서버에 두고
+    # 여기에는 주소와 출입증만 둔다. AZURE_OPENAI_*가 있으면 그쪽을 먼저 쓴다
+    llm_relay_url: str | None = None
+    llm_relay_token: SecretStr | None = None
 
     # OCR(PRD 7.6): 로컬 Tesseract. 경로를 비우면 PATH와 Windows 기본 설치 위치에서 찾는다.
     # 한국어 모델(kor.traineddata)이 기본 폴더에 없으면 TESSERACT_TESSDATA_DIR로 지정한다

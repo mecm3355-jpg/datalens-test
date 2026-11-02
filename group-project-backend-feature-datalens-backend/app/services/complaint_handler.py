@@ -40,6 +40,7 @@ from app.schemas.complaint import (
 from app.schemas.complaint_analysis import Attributes, Category, ComplaintRecord
 from app.schemas.complaint_api import ComplaintAnalysisRequest
 from app.schemas.result import QualityIssue, QualityResult, ResultDocument
+from app.services.ai_classify import AiNewCategory, ExistingCategory, classify_by_ai
 from app.services.artifacts import job_params_key
 from app.services.assignment import assign
 from app.services.attributes import extract_by_llm, extract_by_rules, refine_with_prototypes
@@ -133,6 +134,22 @@ def _reuse_suggestion(
     if best is None:
         return None
     return NameSuggestion(best.suggested_name, best.suggested_definition, best.suggested_group)
+
+
+def _ai_client(settings: Settings) -> LlmClient | None:
+    """AI 분류에 쓸 호출기. AI 분류를 껐거나 연결 정보가 없으면 None(외부 전송 없음).
+
+    대량·정형 작업이라 fast 배포를 먼저 쓰고, 없으면 deep 배포를 쓴다.
+
+    파라미터:
+        settings: 앱 설정
+    """
+    if not settings.ai_classification:
+        return None
+    for tier in ("fast", "deep"):
+        if llm_configured(settings, tier):
+            return create_llm_client(settings, tier)
+    return None
 
 
 def resolve_method(request: ComplaintAnalysisRequest, settings: Settings) -> str:
@@ -381,6 +398,32 @@ async def analyze_complaints(ctx: JobContext) -> None:
     old_vectors = await _pool_vectors(old_pool, ctx, embedder)
     # 애매 건은 검토 대기로 가고 풀에 넣지 않는다. 미배정만 새 카테고리 발견 대상이다
     new_pool = [d for d in docs if d.assign_status == "unassigned"]
+    # AI가 연결돼 있으면 이번 파일의 미배정 민원을 AI가 먼저 나눈다. 기존 카테고리에 맞으면 바로
+    # 배정하고, 새 카테고리는 아래에서 후보로 만든다. AI가 판단하지 못한 민원만 군집화로 넘긴다
+    ai_client = _ai_client(ctx.settings)
+    ai_new: list[AiNewCategory] = []
+    if ai_client is not None and new_pool:
+        await ctx.report("ai_classify", 60)
+        existing = [
+            ExistingCategory(c.category_id, c.name, c.group, c.definition)
+            for c in category_docs
+            if c.status == "active"
+        ]
+        record_of = {
+            str(d.id): ComplaintRecord(record_id=str(d.id), text=d.content_masked) for d in new_pool
+        }
+        classified = await classify_by_ai(list(record_of.values()), existing, ai_client)
+        for doc in new_pool:
+            category_id = classified.existing.get(str(doc.id))
+            if category_id is not None:
+                doc.category_id = category_id
+                doc.group = groups.get(category_id)
+                doc.assign_status = "auto"
+                # 단어 벡터 유사도가 아니라 AI 판단으로 배정했으므로 유사도는 비운다
+                doc.similarity = None
+        ai_new = classified.new
+        handled = set(classified.existing) | {m for c in ai_new for m in c.member_ids}
+        new_pool = [d for d in new_pool if str(d.id) not in handled]
     pool = [*old_pool, *new_pool]
     # 빈 (0, 0) 행렬은 차원이 맞지 않아 vstack에서 빼고, pool과 같은 순서로 벡터를 쌓는다
     parts = [m for m in (old_vectors, *(vector_of[d.id][None, :] for d in new_pool)) if len(m)]
@@ -423,6 +466,25 @@ async def analyze_complaints(ctx: JobContext) -> None:
         candidates.append(candidate_doc)
         for member in candidate.member_ids:
             member_of[ObjectId(member)] = candidate_doc.id
+    # AI가 지은 새 카테고리는 이름·그룹·정의가 정해진 후보로 만든다(작업 끝에 자동 승인)
+    doc_of = {str(d.id): d for d in docs}
+    for made in ai_new:
+        members = [doc_of[m] for m in made.member_ids if m in doc_of]
+        if not members:
+            continue
+        candidate_doc = CandidateDocument(
+            job_id=ctx.job.id,
+            period=max(d.period for d in members),
+            size=len(members),
+            keywords=[w for w in made.name.replace("·", " ").split() if w][:10],
+            exemplar_ids=[d.id for d in members[:5]],
+            suggested_name=made.name,
+            suggested_definition=made.definition or None,
+            suggested_group=made.group,
+        )
+        candidates.append(candidate_doc)
+        for member_doc in members:
+            member_of[member_doc.id] = candidate_doc.id
     for doc in docs:
         doc.candidate_id = member_of.get(doc.id)
 
@@ -532,6 +594,8 @@ async def analyze_complaints(ctx: JobContext) -> None:
         ai["attributes"] = fast_client.usage.to_record()
     if deep_client is not None:
         ai["naming"] = deep_client.usage.to_record()
+    if ai_client is not None:
+        ai["classification"] = ai_client.usage.to_record()
     results = ResultRepository(db, ctx.job.owner_id)
     # 민원 분석 결과가 최신 분석 버전이 되므로, 앞선 파일 진단(열·통계·품질 점수)을 이어받아야
     # 파일 상세 화면이 비지 않는다. 이번에 다시 계산한 종류의 문제는 이번 값으로 바꾼다
