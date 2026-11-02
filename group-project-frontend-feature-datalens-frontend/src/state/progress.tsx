@@ -18,6 +18,8 @@ export type ProgressItem = {
   scanned: boolean;
   // 스캔본인지 서버 진단 결과로 이미 확인했는지(한 번만 확인)
   scanChecked: boolean;
+  // 서버가 자동 분석을 시작하지 않을 때 화면이 직접 요청할 나누기 규칙(스캔본 글자 파일)
+  fallbackSplitRule: string | null;
 };
 
 /** 버튼 없이 잠깐 보였다 사라지는 완료 안내(후보 승인 등). */
@@ -35,6 +37,8 @@ type ProgressValue = {
 
 // 모두 끝난 뒤 결과를 보여 주고 팝업을 닫기까지의 시간
 export const CLOSE_AFTER_MS = 3_000;
+// 멈추거나 실패한 파일이 있으면 이유를 읽을 수 있게 더 오래 보여 준다
+export const CLOSE_AFTER_PROBLEM_MS = 8_000;
 // 완료 안내가 떠 있는 시간
 export const FLASH_MS = 2_500;
 
@@ -61,6 +65,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         waitingSince: null,
         scanned: entry.scanned ?? false,
         scanChecked: entry.scanned ?? false,
+        fallbackSplitRule: null,
       };
     });
     // 이미 끝난 항목이 남아 있으면 새 진행과 섞이지 않게 비우고 시작한다
@@ -76,11 +81,12 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
 
   // 모두 끝나면 결과를 잠깐 보여 준 뒤 팝업을 닫는다
   const allFinished = items.length > 0 && items.every((item) => isFinished(item.step));
+  const problem = items.some((item) => item.step === "stopped" || item.step === "failed");
   useEffect(() => {
     if (!allFinished) return;
-    const timer = window.setTimeout(() => setItems([]), CLOSE_AFTER_MS);
+    const timer = window.setTimeout(() => setItems([]), problem ? CLOSE_AFTER_PROBLEM_MS : CLOSE_AFTER_MS);
     return () => window.clearTimeout(timer);
-  }, [allFinished]);
+  }, [allFinished, problem]);
 
   // 완료 안내는 하나씩 잠깐 보여 준다. 진행 팝업이 떠 있으면 그것이 끝난 뒤에 보여 준다
   const showingFlash = items.length === 0 ? (flashes[0] ?? null) : null;

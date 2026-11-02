@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadJob, loadQuality } from "../lib/remote";
+import { loadJob, loadQuality, startAnalysis } from "../lib/remote";
 import { AUTO_START_WAIT_MS, isFinished, nextStep } from "../lib/stages";
 import { useCatalog } from "../state/catalog";
 import { useProgress } from "../state/progress";
@@ -71,6 +71,23 @@ export function ProgressWatcher() {
             continue;
           }
           update(item.key, { scanChecked: true });
+        }
+        // 스캔본 글자 파일처럼 분석이 꼭 이어져야 하는데 서버가 시작하지 않았으면 직접 요청한다
+        if (result.step === "stopped" && item.fallbackSplitRule) {
+          const started = await startAnalysis(file.id, {}, item.fallbackSplitRule).then(
+            () => true,
+            () => false,
+          );
+          if (cancelled) return;
+          // 실패(그 사이 서버가 시작해 409 등)해도 다시 요청하지 않고 다음 새로고침에서 실제 작업을 따라간다
+          update(item.key, {
+            step: started ? "analyzing" : "diagnosing",
+            ignoreJobId: started ? jobId : null,
+            waitingSince: null,
+            detail: "",
+            fallbackSplitRule: null,
+          });
+          continue;
         }
         const percent = job && !isFinished(result.step) && job.progress > 0 ? job.progress : null;
         if (

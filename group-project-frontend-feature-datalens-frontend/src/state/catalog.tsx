@@ -316,8 +316,11 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
               detail: "",
               ignoreJobId: null,
               waitingSince: null,
+              // 스캔본 글자는 국민신문고 목록이므로, 서버가 분석을 시작하지 않으면 이 규칙으로 직접 요청한다
+              fallbackSplitRule: "sinmungo",
             });
-            await reload();
+            // 글자 파일은 이미 올라갔다. 목록 새로고침이 한 번 실패해도 진행은 계속 따라간다
+            await reload().catch(() => undefined);
           } catch (reason: unknown) {
             update(progressKey, { step: "failed", percent: null, detail: `글자 읽기 실패: ${messageOf(reason)}` });
           }

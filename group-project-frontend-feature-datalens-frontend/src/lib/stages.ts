@@ -37,7 +37,11 @@ const COMPLAINT_ANALYSIS = "complaint_analysis";
 
 // 진단이 끝난 뒤 서버가 민원 분석을 등록하기까지(매핑 추천 등) 기다리는 시간.
 // 그 안에 분석이 시작되지 않으면 자동 분석 대상이 아니었다고 본다
-export const AUTO_START_WAIT_MS = 15_000;
+// 배포 서버는 작업 대기열을 거쳐 몇십 초 걸릴 수 있어 넉넉히 둔다
+export const AUTO_START_WAIT_MS = 30_000;
+
+/** 진단을 마치고 민원 분석이 시작되기를 기다리는 동안의 설명. */
+export const WAITING_DETAIL = "진단을 마쳤습니다. 민원 분석 시작을 기다리고 있습니다.";
 
 /**
  * 끝난 단계인지.
@@ -107,7 +111,7 @@ export function nextStep(
   }
   // 진단만 끝났다: 서버가 곧 민원 분석을 이어 갈 수 있으므로 잠시 기다린다
   const since = waitingSince ?? now;
-  if (now - since < AUTO_START_WAIT_MS) return { step: "diagnosing", detail: "", waitingSince: since };
+  if (now - since < AUTO_START_WAIT_MS) return { step: "diagnosing", detail: WAITING_DETAIL, waitingSince: since };
   return {
     step: "stopped",
     detail:

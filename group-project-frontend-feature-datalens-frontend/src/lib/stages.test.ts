@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_START_WAIT_MS, nextStep, stepsFor, type ServerState } from "./stages";
+import { AUTO_START_WAIT_MS, nextStep, stepsFor, WAITING_DETAIL, type ServerState } from "./stages";
 
 const base: ServerState = {
   status: "processing",
@@ -29,7 +29,7 @@ describe("처리 단계 판단", () => {
 
   it("진단만 끝나면 자동 분석을 잠시 기다렸다가 멈춘 이유를 알린다", () => {
     const completed = { ...base, status: "completed" as const };
-    expect(nextStep(completed, null, null, 1_000)).toEqual({ step: "diagnosing", detail: "", waitingSince: 1_000 });
+    expect(nextStep(completed, null, null, 1_000)).toEqual({ step: "diagnosing", detail: WAITING_DETAIL, waitingSince: 1_000 });
 
     const stopped = nextStep(completed, null, 1_000, 1_000 + AUTO_START_WAIT_MS);
     expect(stopped.step).toBe("stopped");

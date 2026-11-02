@@ -12,11 +12,13 @@ const jobs = vi.hoisted(() => new Map<string, Job>());
 vi.mock("../state/progress", () => ({ useProgress: () => ({ items: state.items, update }) }));
 vi.mock("../state/catalog", () => ({ useCatalog: () => state.catalog }));
 const quality = vi.hoisted(() => ({ issues: [] as Array<{ type: string }> }));
+const startAnalysisMock = vi.hoisted(() => vi.fn(async () => ({ jobId: "j9" })));
 const readScanned = vi.hoisted(() => vi.fn(async () => undefined));
 const hasSource = vi.hoisted(() => ({ value: true }));
 vi.mock("../lib/remote", () => ({
   loadJob: vi.fn(async (id: string) => jobs.get(id)),
   loadQuality: vi.fn(async () => quality.issues),
+  startAnalysis: startAnalysisMock,
 }));
 
 function item(patch: Partial<ProgressItem>): ProgressItem {
@@ -31,6 +33,7 @@ function item(patch: Partial<ProgressItem>): ProgressItem {
     waitingSince: null,
     scanned: false,
     scanChecked: false,
+    fallbackSplitRule: null,
     ...patch,
   };
 }
@@ -74,6 +77,7 @@ describe("진행 감시", () => {
   beforeEach(() => {
     update.mockClear();
     readScanned.mockClear();
+    startAnalysisMock.mockClear();
     quality.issues = [];
     hasSource.value = true;
   });
@@ -132,5 +136,31 @@ describe("진행 감시", () => {
     expect(patch.step).toBe("stopped");
     expect(patch.detail).toContain("원본 PDF를 다시 고르면");
     expect(readScanned).not.toHaveBeenCalled();
+  });
+
+  it("스캔본 글자 파일은 서버가 분석을 시작하지 않으면 국민신문고 규칙으로 직접 요청한다", async () => {
+    state.items = [item({ waitingSince: 0, fallbackSplitRule: "sinmungo", scanChecked: true })];
+    setServer("completed", { ...job("j1", "analyze", "completed", 100) }, 0, "txt");
+    render(<ProgressWatcher />);
+    await flush();
+    await flush();
+
+    expect(startAnalysisMock).toHaveBeenCalledWith("f1", {}, "sinmungo");
+    expect(update).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ step: "analyzing", ignoreJobId: "j1", fallbackSplitRule: null }),
+    );
+  });
+
+  it("기다리는 동안에는 민원 분석을 기다린다고 보여 준다", async () => {
+    state.items = [item({})];
+    setServer("completed", job("j1", "analyze", "completed", 100));
+    render(<ProgressWatcher />);
+    await flush();
+
+    expect(update).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ step: "diagnosing", detail: expect.stringContaining("기다리고") as unknown }),
+    );
   });
 });

@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CLOSE_AFTER_MS, FLASH_MS, ProgressProvider, useProgress } from "./progress";
+import { CLOSE_AFTER_MS, CLOSE_AFTER_PROBLEM_MS, FLASH_MS, ProgressProvider, useProgress } from "./progress";
 
 type Api = ReturnType<typeof useProgress>;
 let api: Api;
@@ -77,5 +77,23 @@ describe("진행 팝업", () => {
       vi.advanceTimersByTime(FLASH_MS);
     });
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("멈추거나 실패한 파일이 있으면 이유를 읽도록 더 오래 보여 준 뒤 닫는다", () => {
+    setup();
+    let key = "";
+    act(() => {
+      [key] = api.begin([{ name: "memo.txt" }]);
+    });
+    act(() => api.update(key, { step: "stopped", detail: "서식을 찾지 못했습니다." }));
+    act(() => {
+      vi.advanceTimersByTime(CLOSE_AFTER_MS);
+    });
+    expect(screen.getByRole("dialog").textContent).toContain("서식을 찾지 못했습니다.");
+
+    act(() => {
+      vi.advanceTimersByTime(CLOSE_AFTER_PROBLEM_MS - CLOSE_AFTER_MS);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
