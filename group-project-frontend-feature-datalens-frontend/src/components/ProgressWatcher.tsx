@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadJob } from "../lib/remote";
+import { loadJob, loadQuality } from "../lib/remote";
 import { AUTO_START_WAIT_MS, isFinished, nextStep } from "../lib/stages";
 import { useCatalog } from "../state/catalog";
 import { useProgress } from "../state/progress";
@@ -9,7 +9,7 @@ import { useProgress } from "../state/progress";
  * 목록이 새로고침될 때마다(처리 중에는 1.5초마다) 마지막 작업을 읽어 단계와 진행률을 바꿉니다.
  */
 export function ProgressWatcher() {
-  const { files, complaintsByFile, candidates } = useCatalog();
+  const { files, complaintsByFile, candidates, hasSource, readScanned } = useCatalog();
   const { items, update } = useProgress();
   // 진단 뒤 자동 분석을 기다리는 동안 목록이 그대로여도 다시 판단하도록 깨운다
   const [tick, setTick] = useState(0);
@@ -26,7 +26,8 @@ export function ProgressWatcher() {
     const pending = candidates.filter((item) => item.decision === "pending").length;
     void (async () => {
       for (const item of items) {
-        if (item.fileId === null || isFinished(item.step)) continue;
+        // 글자 읽기 중인 항목은 catalog.readScanned가 직접 단계를 바꾼다
+        if (item.fileId === null || isFinished(item.step) || item.step === "ocr") continue;
         const file = files.find((entry) => entry.id === item.fileId);
         // 업로드 직후 목록에 아직 없으면 다음 새로고침을 기다린다
         if (!file) continue;
@@ -47,6 +48,30 @@ export function ProgressWatcher() {
           item.waitingSince,
           Date.now(),
         );
+        // PDF 진단이 끝났는데 분석으로 안 넘어가면, 글자 없는 스캔본인지 한 번 확인한다.
+        // 스캔본은 서버가 글자를 못 읽으므로 기다리지 않고 바로 브라우저 글자 읽기로 넘긴다
+        const diagnosedOnly = result.waitingSince !== null || result.step === "stopped";
+        if (diagnosedOnly && !item.scanChecked && file.extension.toLowerCase() === "pdf") {
+          const issues = await loadQuality(file.id).catch(() => []);
+          if (cancelled) return;
+          const scanned = issues.some((issue) => issue.type === "no_text_layer");
+          if (scanned && hasSource(file.id)) {
+            update(item.key, { scanned: true, scanChecked: true, step: "ocr", waitingSince: null, detail: "" });
+            void readScanned(item.key, file.id);
+            continue;
+          }
+          if (scanned) {
+            update(item.key, {
+              scanned: true,
+              scanChecked: true,
+              step: "stopped",
+              waitingSince: null,
+              detail: "글자 없는 스캔본입니다. 파일 화면에서 원본 PDF를 다시 고르면 이 브라우저에서 읽어 분석합니다.",
+            });
+            continue;
+          }
+          update(item.key, { scanChecked: true });
+        }
         const percent = job && !isFinished(result.step) && job.progress > 0 ? job.progress : null;
         if (
           result.step !== item.step ||
@@ -61,7 +86,7 @@ export function ProgressWatcher() {
     return () => {
       cancelled = true;
     };
-  }, [files, items, complaintsByFile, candidates, update, tick]);
+  }, [files, items, complaintsByFile, candidates, hasSource, readScanned, update, tick]);
 
   return null;
 }

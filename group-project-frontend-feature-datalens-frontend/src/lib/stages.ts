@@ -1,14 +1,24 @@
 import type { FileCategory, FileStatus } from "../types";
 
 /** 진행 팝업에 보이는 파일 한 개의 단계. done·stopped·failed는 끝난 단계다. */
-export type Step = "uploading" | "diagnosing" | "analyzing" | "done" | "stopped" | "failed";
+export type Step = "uploading" | "diagnosing" | "ocr" | "analyzing" | "done" | "stopped" | "failed";
 
-/** 진행 중 단계 순서(팝업의 단계 표시줄). */
-export const STEP_ORDER = ["uploading", "diagnosing", "analyzing", "done"] as const;
+type ProgressStep = "uploading" | "diagnosing" | "ocr" | "analyzing" | "done";
+
+/**
+ * 팝업의 단계 표시줄 순서. 글자 없는 스캔본만 브라우저 글자 읽기(OCR) 단계를 거친다.
+ * @param scanned 스캔본인지
+ */
+export function stepsFor(scanned: boolean): ProgressStep[] {
+  return scanned
+    ? ["uploading", "diagnosing", "ocr", "analyzing", "done"]
+    : ["uploading", "diagnosing", "analyzing", "done"];
+}
 
 export const STEP_LABEL: Record<Step, string> = {
   uploading: "업로드",
   diagnosing: "형식 검증·품질 진단",
+  ocr: "글자 읽기(OCR)",
   analyzing: "민원 분석",
   done: "완료",
   stopped: "분석 대기",
@@ -16,9 +26,10 @@ export const STEP_LABEL: Record<Step, string> = {
 };
 
 /** 단계마다 지금 무엇을 하는지 한 줄 설명. */
-export const STEP_DETAIL: Record<"uploading" | "diagnosing" | "analyzing", string> = {
+export const STEP_DETAIL: Record<"uploading" | "diagnosing" | "ocr" | "analyzing", string> = {
   uploading: "파일을 올리고 있습니다.",
   diagnosing: "실제 형식을 확인하고 품질을 진단하고 있습니다.",
+  ocr: "글자 없는 스캔본이라 이 브라우저에서 글자를 읽고 있습니다. 창을 닫지 마세요.",
   analyzing: "개인정보를 가리고, 속성을 뽑고, 카테고리에 배정한 뒤 남은 민원을 신규 후보로 묶고 있습니다.",
 };
 
