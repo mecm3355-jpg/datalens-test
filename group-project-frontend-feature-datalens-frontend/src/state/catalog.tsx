@@ -14,9 +14,15 @@ import {
   type Surge,
 } from "../lib/derive";
 import { ApiError, assignFileCategory, deleteFile, uploadFile } from "../lib/api";
-import { loadServer, sendCandidateDecision, sendReview, startAnalysis, type ServerData } from "../lib/remote";
-import type { StageNotice } from "../lib/stages";
-import { useNotices } from "./notices";
+import {
+  loadServer,
+  sendCandidateDecision,
+  sendReview,
+  startAnalysis,
+  type ComplaintStats,
+  type ServerData,
+} from "../lib/remote";
+import { useProgress, type Flash } from "./progress";
 import type {
   Candidate,
   CandidateDecision,
@@ -44,6 +50,8 @@ type CatalogValue = {
   error: string | null;
   busy: boolean;
   truncated: boolean;
+  // 서버 집계 현황(대시보드의 카테고리별 건수). 아직 못 불러왔으면 null
+  stats: ComplaintStats | null;
   files: DataFile[];
   complaints: Complaint[];
   categories: Category[];
@@ -86,6 +94,8 @@ function messageOf(error: unknown): string {
 
 // 처리가 끝난 뒤에도 새로고침을 이어 가는 시간(자동 민원 분석이 등록되기를 기다림)
 const GRACE_POLL_MS = 20_000;
+// 처리 중 새로고침 간격. 단계가 바뀐 것을 빨리 보여 주려고 짧게 둔다
+const POLL_MS = 1_500;
 
 /**
  * 후보 결정 뒤 띄울 안내.
@@ -93,13 +103,12 @@ const GRACE_POLL_MS = 20_000;
  * @param size 후보에 묶인 민원 수
  * @param decision 결정(approved, held, merged)
  */
-function decisionNotice(name: string, size: number, decision: CandidateDecision): StageNotice {
+function decisionNotice(name: string, size: number, decision: CandidateDecision): Flash {
   if (decision === "approved") {
     return {
       tone: "success",
       title: "후보 승인 · 카테고리 생성",
       message: `'${name}' 카테고리를 만들었습니다. 묶여 있던 민원 ${size}건이 이 카테고리로 배정되고, 다음 파일부터는 비슷한 민원이 자동으로 배정됩니다.`,
-      link: { to: "/categories", label: "카테고리 보기" },
     };
   }
   if (decision === "merged") {
@@ -160,16 +169,18 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     const timer = window.setTimeout(() => setGrace(false), GRACE_POLL_MS);
     return () => window.clearTimeout(timer);
   }, [active]);
-  const polling = active || grace;
+  const { items: progressItems, begin, update, flash } = useProgress();
+  // 진행 팝업에 끝나지 않은 파일이 있으면 그 파일이 끝날 때까지 새로고침한다
+  const tracking = progressItems.some((item) => item.step !== "done" && item.step !== "stopped" && item.step !== "failed");
+  const polling = active || grace || tracking;
   useEffect(() => {
     if (!polling) return;
     const timer = window.setInterval(() => {
       void reload().catch((reason: unknown) => setError(messageOf(reason)));
-    }, 3000);
+    }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [polling, reload]);
 
-  const { notify } = useNotices();
   // 사람이 한 일을 실행하고 다시 불러온다. 성공하면 true(완료 안내를 띄울지 정하는 데 쓴다)
   const run = useCallback(
     async (action: () => Promise<void>): Promise<boolean> => {
@@ -204,6 +215,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       error,
       busy,
       truncated: server?.truncated ?? false,
+      stats: server?.stats ?? null,
       files: server?.files ?? [],
       complaints: built.complaints,
       categories,
@@ -222,14 +234,18 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       reload,
       uploadFiles: (list) => {
         const ids: string[] = [];
+        // 고르는 즉시 진행 팝업을 띄우고, 파일마다 업로드가 끝나면 진단 단계로 넘긴다
+        const keys = begin(list.map((file) => ({ name: file.name })));
         return run(async () => {
           const errors: string[] = [];
-          for (const file of list) {
+          for (const [index, file] of list.entries()) {
             try {
               const uploaded = await uploadFile(file);
               ids.push(uploaded.fileId);
+              update(keys[index], { fileId: uploaded.fileId, step: "diagnosing" });
             } catch (reason: unknown) {
               errors.push(`${file.name}: ${messageOf(reason)}`);
+              update(keys[index], { step: "failed", detail: messageOf(reason) });
             }
           }
           if (errors.length > 0) throw new Error(errors.join(" "));
@@ -241,20 +257,27 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           if (!candidate) throw new Error("후보를 찾지 못했습니다.");
           await sendCandidateDecision(candidate, decision, mergedIntoId);
         });
-        if (ok && candidate) notify(decisionNotice(candidate.suggestedName, candidate.size, decision));
+        if (ok && candidate) flash(decisionNotice(candidate.suggestedName, candidate.size, decision));
       },
       confirmReview: async (id, categoryId) => {
         const ok = await run(() => sendReview(id, categoryId));
         if (ok) {
-          notify({
+          flash({
             tone: "success",
             title: "검토 확정",
             message: `민원을 '${categoryById(categoryId)?.name ?? categoryId}' 카테고리로 확정했습니다. 사람 확정 건수에 반영됩니다.`,
           });
         }
       },
-      requestAnalysis: (fileId, mapping, splitRule) =>
-        run(() => startAnalysis(fileId, mapping, splitRule).then(() => undefined)).then(() => undefined),
+      requestAnalysis: async (fileId, mapping, splitRule) => {
+        const file = server?.files.find((item) => item.id === fileId);
+        // 이전 분석 작업은 이번 진행으로 보지 않도록 지금 마지막 작업을 넘긴다
+        const [key] = begin([
+          { name: file?.originalName ?? "파일", fileId, step: "analyzing", ignoreJobId: file?.lastJobId ?? null },
+        ]);
+        const ok = await run(() => startAnalysis(fileId, mapping, splitRule).then(() => undefined));
+        if (!ok) update(key, { step: "failed", detail: "분석을 시작하지 못했습니다." });
+      },
       deleteFile: async (fileId) => {
         // 삭제 뒤 화면을 옮길지 정해야 하므로 run과 달리 성공 여부를 돌려준다
         setBusy(true);
@@ -263,7 +286,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           const name = server?.files.find((file) => file.id === fileId)?.originalName ?? "파일";
           await deleteFile(fileId);
           await reload();
-          notify({
+          flash({
             tone: "success",
             title: "파일 삭제",
             message: `'${name}'과(와) 이 파일에서 나온 민원·분석 결과·검토 기록을 삭제했습니다.`,
@@ -282,11 +305,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           updated = (await assignFileCategory(fileId, categoryId)).updatedCount;
         });
         if (ok) {
-          notify({
+          flash({
             tone: "success",
             title: "파일 카테고리 확정",
             message: `이 파일의 민원 ${updated}건을 '${categoryById(categoryId)?.name ?? categoryId}' 카테고리로 확정했습니다.`,
-            link: { to: "/complaints", label: "민원 보기" },
           });
         }
       },
@@ -309,7 +331,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
           .sort((a, b) => b.count - a.count);
       },
     };
-  }, [busy, error, notify, reload, run, server, status]);
+  }, [begin, busy, error, flash, reload, run, server, status, update]);
 
   return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;
 }

@@ -445,6 +445,7 @@ class ComplaintService:
         current_period, previous_period, categories = await self._period_comparison()
         assignment = await self._complaints.counts_by("assignStatus", period)
         groups = await self._complaints.counts_by("group", period)
+        by_category = await self._complaints.counts_by("categoryId", period)
         regions = await self._complaints.counts_by("region", period)
         urgency = await self._complaints.counts_by("attributes.urgency", period)
         monthly = await self._complaints.counts_by("period")
@@ -464,6 +465,7 @@ class ComplaintService:
                 confirmed=assignment.get("confirmed", 0),
             ),
             groups=_by_count(groups),
+            categories_total=_by_count(by_category),
             regions=_by_count(regions)[:STATS_REGION_LIMIT],
             # 긴급도는 단계 순서가 의미 있으므로 건수가 아니라 단계 순으로 둔다
             urgency=[

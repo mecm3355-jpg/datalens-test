@@ -1,30 +1,39 @@
 import type { FileCategory, FileStatus } from "../types";
 
-/** 파일 처리 단계. 작업 종류(진단 analyze / 민원 분석 complaint_analysis)와 상태로 정한다. */
-export type Phase = "diagnosing" | "analyzing" | "diagnosed" | "analyzed" | "failed";
+/** 진행 팝업에 보이는 파일 한 개의 단계. done·stopped·failed는 끝난 단계다. */
+export type Step = "uploading" | "diagnosing" | "analyzing" | "done" | "stopped" | "failed";
 
-/** 단계가 바뀔 때 띄우는 안내 팝업 내용. */
-export type StageNotice = {
-  title: string;
-  message: string;
-  tone: "info" | "success" | "warning" | "error";
-  // 다음에 할 일로 바로 가는 버튼(없으면 확인만)
-  link?: { to: string; label: string };
+/** 진행 중 단계 순서(팝업의 단계 표시줄). */
+export const STEP_ORDER = ["uploading", "diagnosing", "analyzing", "done"] as const;
+
+export const STEP_LABEL: Record<Step, string> = {
+  uploading: "업로드",
+  diagnosing: "형식 검증·품질 진단",
+  analyzing: "민원 분석",
+  done: "완료",
+  stopped: "분석 대기",
+  failed: "실패",
+};
+
+/** 단계마다 지금 무엇을 하는지 한 줄 설명. */
+export const STEP_DETAIL: Record<"uploading" | "diagnosing" | "analyzing", string> = {
+  uploading: "파일을 올리고 있습니다.",
+  diagnosing: "실제 형식을 확인하고 품질을 진단하고 있습니다.",
+  analyzing: "개인정보를 가리고, 속성을 뽑고, 카테고리에 배정한 뒤 남은 민원을 신규 후보로 묶고 있습니다.",
 };
 
 const COMPLAINT_ANALYSIS = "complaint_analysis";
 
+// 진단이 끝난 뒤 서버가 민원 분석을 등록하기까지(매핑 추천 등) 기다리는 시간.
+// 그 안에 분석이 시작되지 않으면 자동 분석 대상이 아니었다고 본다
+export const AUTO_START_WAIT_MS = 15_000;
+
 /**
- * 파일 상태와 마지막 작업 종류로 처리 단계를 구한다. 작업이 없으면(미지원 형식) null.
- * @param status 파일 상태
- * @param jobType 마지막 작업 종류(analyze, complaint_analysis 등)
+ * 끝난 단계인지.
+ * @param step 단계
  */
-export function phaseOf(status: FileStatus, jobType: string | null): Phase | null {
-  if (status === "failed") return "failed";
-  if (jobType === null) return null;
-  const analyzing = jobType === COMPLAINT_ANALYSIS;
-  if (status === "queued" || status === "processing") return analyzing ? "analyzing" : "diagnosing";
-  return analyzing ? "analyzed" : "diagnosed";
+export function isFinished(step: Step): boolean {
+  return step === "done" || step === "stopped" || step === "failed";
 }
 
 /**
@@ -35,73 +44,65 @@ export function autoAnalysisExpected(category: FileCategory): boolean {
   return category === "tabular" || category === "document" || category === "text";
 }
 
+/** 단계 판단에 쓰는 서버 상태. */
+export type ServerState = {
+  status: FileStatus;
+  jobId: string | null;
+  jobType: string | null;
+  jobError: string | null;
+  fileCategory: FileCategory;
+  complaintCount: number;
+  pendingCandidates: number;
+};
+
+/** nextStep 결과: 단계, 설명, 진단 뒤 분석을 기다리기 시작한 시각. */
+export type StepResult = { step: Step; detail: string; waitingSince: number | null };
+
 /**
- * 단계에 맞는 안내 문구를 만든다.
- * @param file 파일 ID·이름·분류
- * @param phase 새 단계
- * @param context 분석 결과 수치와 오류 메시지
+ * 서버 상태로 파일의 현재 단계를 정한다.
+ * @param server 파일·마지막 작업 상태와 분석 수치
+ * @param ignoreJobId 이 작업은 이번 진행과 무관하다(다시 분석할 때 이전 분석 작업)
+ * @param waitingSince 진단이 끝나 자동 분석을 기다리기 시작한 시각(없으면 null)
+ * @param now 현재 시각(ms)
  */
-export function stageNotice(
-  file: { id: string; originalName: string; fileCategory: FileCategory },
-  phase: Phase,
-  context: { complaintCount: number; pendingCandidates: number; error: string | null },
-): StageNotice {
-  const name = file.originalName;
-  const fileLink = { to: `/files/${file.id}`, label: "파일 화면으로" };
-  switch (phase) {
-    case "diagnosing":
-      return {
-        tone: "info",
-        title: "1단계 · 형식 검증과 품질 진단",
-        message: autoAnalysisExpected(file.fileCategory)
-          ? `'${name}' 파일을 받았습니다. 실제 형식을 확인하고 품질을 진단하고 있습니다. 끝나면 민원 분석으로 자동으로 넘어갑니다.`
-          : `'${name}' 파일을 받았습니다. 실제 형식을 확인하고 기본 정보를 진단하고 있습니다.`,
-      };
-    case "analyzing":
-      return {
-        tone: "info",
-        title: "2단계 · 민원 분석 자동 시작",
-        message: `'${name}' 진단을 마치고 민원 분석을 시작했습니다. 개인정보를 가리고, 속성을 뽑고, 기존 카테고리에 배정한 뒤 남은 민원을 신규 후보로 묶습니다.`,
-      };
-    case "analyzed":
-      if (context.pendingCandidates > 0) {
-        return {
-          tone: "success",
-          title: "3단계 · 분석 완료, 후보 승인 필요",
-          message: `'${name}'에서 민원 ${context.complaintCount}건을 분석했습니다. 승인을 기다리는 신규 후보가 ${context.pendingCandidates}개 있습니다. 후보를 승인하면 묶인 민원이 그 카테고리로 배정됩니다.`,
-          link: { to: "/categories/candidates", label: "후보 승인하러 가기" },
-        };
-      }
-      return {
-        tone: "success",
-        title: "3단계 · 분석 완료",
-        message: `'${name}'에서 민원 ${context.complaintCount}건을 분석해 카테고리에 배정했습니다. 애매한 민원은 검토 화면에서 확정하세요.`,
-        link: { to: "/complaints", label: "민원 보기" },
-      };
-    case "diagnosed":
-      if (!autoAnalysisExpected(file.fileCategory)) {
-        return {
-          tone: "info",
-          title: "진단 완료",
-          message: `'${name}' 진단을 마쳤습니다. 이 형식은 민원 분석을 하지 않습니다.`,
-          link: fileLink,
-        };
-      }
-      return {
-        tone: "warning",
-        title: "진단 완료 · 분석은 직접 시작",
-        message:
-          file.fileCategory === "tabular"
-            ? `'${name}'에서 민원 본문 열을 찾지 못해 자동 분석을 하지 않았습니다. 파일 화면에서 열을 정한 뒤 '분석 실행'을 누르세요.`
-            : `'${name}'에서 민원을 나눌 서식(국민신문고 등)을 찾지 못했거나 글자가 없는 스캔본이라 자동 분석을 하지 않았습니다. 파일 화면에서 확인하세요.`,
-        link: fileLink,
-      };
-    case "failed":
-      return {
-        tone: "error",
-        title: "처리 실패",
-        message: `'${name}' 처리에 실패했습니다. ${context.error ?? "처리 중 오류가 발생했습니다."}`,
-        link: fileLink,
-      };
+export function nextStep(
+  server: ServerState,
+  ignoreJobId: string | null,
+  waitingSince: number | null,
+  now: number,
+): StepResult {
+  // 미지원 형식은 작업 없이 기본 정보만 등록되고 바로 끝난다
+  if (server.jobId === null && ignoreJobId === null && server.status === "completed") {
+    return { step: "done", detail: "기본 정보만 등록했습니다(내용 분석을 지원하지 않는 형식).", waitingSince: null };
   }
+  // 다시 분석을 눌렀는데 아직 새 작업이 안 보이면 분석 단계로 둔다
+  if (server.jobId === null || server.jobId === ignoreJobId) {
+    return { step: ignoreJobId ? "analyzing" : "diagnosing", detail: "", waitingSince: null };
+  }
+  if (server.status === "failed") {
+    return { step: "failed", detail: server.jobError ?? "처리 중 오류가 발생했습니다.", waitingSince: null };
+  }
+  const analysis = server.jobType === COMPLAINT_ANALYSIS;
+  if (server.status === "queued" || server.status === "processing") {
+    return { step: analysis ? "analyzing" : "diagnosing", detail: "", waitingSince: null };
+  }
+  if (analysis) {
+    const candidates =
+      server.pendingCandidates > 0 ? ` · 승인 대기 후보 ${server.pendingCandidates}개(후보 화면에서 승인)` : "";
+    return { step: "done", detail: `민원 ${server.complaintCount}건을 분석했습니다${candidates}.`, waitingSince: null };
+  }
+  if (!autoAnalysisExpected(server.fileCategory)) {
+    return { step: "done", detail: "진단을 마쳤습니다. 이 형식은 민원 분석을 하지 않습니다.", waitingSince: null };
+  }
+  // 진단만 끝났다: 서버가 곧 민원 분석을 이어 갈 수 있으므로 잠시 기다린다
+  const since = waitingSince ?? now;
+  if (now - since < AUTO_START_WAIT_MS) return { step: "diagnosing", detail: "", waitingSince: since };
+  return {
+    step: "stopped",
+    detail:
+      server.fileCategory === "tabular"
+        ? "민원 본문 열을 찾지 못해 자동 분석을 하지 않았습니다. 파일 화면에서 열을 정하고 분석하세요."
+        : "민원을 나눌 서식을 찾지 못했거나 글자 없는 스캔본이라 자동 분석을 하지 않았습니다.",
+    waitingSince: since,
+  };
 }

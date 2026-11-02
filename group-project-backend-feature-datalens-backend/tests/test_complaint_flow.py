@@ -523,6 +523,11 @@ def test_stats_show_pending_candidates_before_first_approval(db_client: TestClie
     stats = db_client.get("/api/v1/complaints/stats").json()["data"]
     assert stats["assignment"]["unassigned"] == 16
     assert stats["groups"][0] == {"label": "안전·조명", "count": 8}
+    # 카테고리별 건수: 승인한 카테고리 8건, 나머지는 미분류(label None)
+    assert stats["categoriesTotal"] == [
+        {"label": res.json()["data"]["categoryId"], "count": 8},
+        {"label": None, "count": 16},
+    ]
     assert stats["pendingCandidateCount"] == 2
 
     other_month = db_client.get("/api/v1/complaints/stats?period=2026-02").json()["data"]

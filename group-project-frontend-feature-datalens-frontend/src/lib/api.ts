@@ -38,6 +38,7 @@ export const endpoints = {
   reviews: "/api/v1/complaints/reviews",
   review: (reviewId: string) => `/api/v1/complaints/reviews/${reviewId}`,
   fileCategory: (fileId: string) => `/api/v1/files/${fileId}/category`,
+  complaintStats: "/api/v1/complaints/stats",
   filesFromBlob: "/api/v1/files/from-blob",
   blobUpload: "/api/blob-upload",
   authSession: "/api/v1/auth/session",
