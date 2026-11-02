@@ -57,6 +57,8 @@ def make_settings(storage_root: Path, **overrides: object) -> Settings:
 
     .env는 읽지 않는다(실제 Atlas·Azure 값이 테스트에 섞이지 않게).
     OCR은 끈다(PC에 Tesseract가 있는지에 따라 결과가 달라지지 않게). 켜려면 tesseract_cmd를 넘긴다.
+    신규 후보 자동 승인도 끈다(후보 승인·보류·합치기 흐름을 시험하려고). 켜려면
+    auto_approve_candidates=True를 넘긴다.
 
     파라미터:
         storage_root: 원본 파일 저장소로 쓸 임시 폴더
@@ -68,6 +70,7 @@ def make_settings(storage_root: Path, **overrides: object) -> Settings:
         mongodb_db_name="test",
         storage_root=storage_root,
         tesseract_cmd=str(storage_root / "no-tesseract.exe"),
+        auto_approve_candidates=False,
     )
     return settings.model_copy(update=overrides)
 
