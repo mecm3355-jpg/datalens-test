@@ -1149,3 +1149,50 @@ td.num {
     font-size: 32px;
   }
 }
+
+/* 단계 안내 팝업: 화면 가운데, 뒤 화면은 흐리게 */
+.notice-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--space-md);
+  background: rgba(11, 14, 17, 0.72);
+}
+
+.notice-dialog {
+  width: min(480px, 100%);
+  background: var(--color-surface-elevated-dark);
+  color: var(--color-body);
+  border-radius: var(--radius-xl);
+  border-top: 4px solid var(--color-info);
+  padding: var(--space-lg);
+  display: grid;
+  gap: var(--space-sm);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.notice-success { border-top-color: var(--color-trading-up); }
+.notice-warning { border-top-color: var(--color-primary); }
+.notice-error { border-top-color: var(--color-trading-down); }
+
+.notice-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-on-dark);
+}
+
+.notice-body {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}

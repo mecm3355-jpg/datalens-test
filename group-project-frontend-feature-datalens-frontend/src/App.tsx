@@ -15,7 +15,9 @@ import { NotFoundPage } from "./pages/NotFoundPage";
 import { ReviewsPage } from "./pages/ReviewsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
+import { StageNotifier } from "./components/StageNotifier";
 import { CatalogProvider } from "./state/catalog";
+import { NoticeProvider } from "./state/notices";
 import { SessionProvider, useSession } from "./state/session";
 
 /**
@@ -28,6 +30,7 @@ function ProtectedShell() {
   if (!loggedIn) return <Navigate to="/login" replace />;
   return (
     <CatalogProvider>
+      <StageNotifier />
       <AppShell />
     </CatalogProvider>
   );
@@ -37,6 +40,7 @@ export function App() {
   return (
     <BrowserRouter>
       <SessionProvider>
+        <NoticeProvider>
         <Routes>
           <Route path="login" element={<LoginPage />} />
           <Route path="signup" element={<SignupPage />} />
@@ -56,6 +60,7 @@ export function App() {
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
+        </NoticeProvider>
       </SessionProvider>
     </BrowserRouter>
   );
