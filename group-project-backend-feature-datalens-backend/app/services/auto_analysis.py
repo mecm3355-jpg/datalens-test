@@ -88,8 +88,18 @@ async def approve_new_candidates(ctx: JobContext) -> int:
         # 이전 파일에서 남아 있는 후보는 건드리지 않고 이번 작업이 만든 후보만 승인한다
         if candidate.job_id != ctx.job.id:
             continue
-        group = candidate.suggested_group or guess_group(candidate.keywords, exemplars)
-        request = CandidateDecisionRequest(decision="approved", decided_by="자동 승인", group=group)
+        # 같은 파일을 다시 분석하면 같은 민원이 다시 후보가 된다. 이미 있는 카테고리와 사실상
+        # 같으면 새로 만들지 않고 그 카테고리에 합친다(카테고리 중복 방지)
+        existing = await service.same_category(candidate.id)
+        if existing is not None:
+            request = CandidateDecisionRequest(
+                decision="merged", decided_by="자동 승인", merged_into_category_id=existing
+            )
+        else:
+            group = candidate.suggested_group or guess_group(candidate.keywords, exemplars)
+            request = CandidateDecisionRequest(
+                decision="approved", decided_by="자동 승인", group=group
+            )
         await service.decide(str(candidate.id), request)
         approved += 1
     if approved:

@@ -573,6 +573,37 @@ class ComplaintService:
             load_vectors, self._storage, [(m.id, m.file_id, m.job_id) for m in members]
         )
 
+    async def same_category(self, candidate_id: ObjectId) -> str | None:
+        """후보와 사실상 같은 기존 활성 카테고리 ID. 없으면 None.
+
+        후보 소속 민원의 중심과 카테고리 중심의 유사도가 병합 기준(taxonomy.merge_similarity)
+        이상이면 같은 카테고리로 본다. 같은 파일을 다시 분석해 같은 민원이 다시 후보가 됐을 때
+        자동 승인이 같은 카테고리를 또 만들지 않게 하려고 쓴다.
+
+        파라미터:
+            candidate_id: 후보 _id
+        """
+        latest = await self._categories.latest_version()
+        categories = (
+            [c for c in await self._categories.list_version(latest) if c.status == "active"]
+            if latest
+            else []
+        )
+        if not categories:
+            return None
+        vectors = await self._member_vectors(await self._complaints.by_candidate(candidate_id))
+        if not vectors:
+            return None
+        matrix = np.stack(list(vectors.values())).astype(np.float32)
+        center = normalize(matrix.mean(axis=0, keepdims=True))[0]
+        threshold = load_analysis_config().taxonomy.merge_similarity
+        best_id, best = None, threshold
+        for category in categories:
+            similarity = float(np.asarray(category.centroid, dtype=np.float32) @ center)
+            if similarity >= best:
+                best_id, best = category.category_id, similarity
+        return best_id
+
     async def _retro_assign(self, version: int) -> int:
         """미배정 풀을 새 체계로 다시 배정한다(소급 배정). 새로 배정된 수를 돌려준다.
 

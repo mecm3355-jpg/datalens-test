@@ -599,3 +599,44 @@ def test_new_candidates_are_approved_automatically(tmp_path: Path) -> None:
     finally:
         with MongoClient[dict[str, object]](TEST_URI) as mongo:
             mongo.drop_database(settings.mongodb_db_name)
+
+
+def test_reanalysis_merges_into_existing_category_instead_of_duplicating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """다시 분석해 같은 민원이 다시 후보가 돼도 자동 승인이 같은 카테고리를 또 만들지 않는다."""
+    from app.core.analysis_config import load_analysis_config
+    from app.services import complaint_handler
+
+    assert TEST_URI is not None
+    settings = make_settings(tmp_path, auto_approve_candidates=True)
+    settings.mongodb_uri = TEST_URI
+    settings.mongodb_db_name = f"datalens_test_{ObjectId()}"
+    try:
+        with TestClient(create_app(settings)) as client:
+            file_id = upload(client, "jan.csv", csv_bytes(first_month()))
+            run_worker(client)
+            first = client.get("/api/v1/complaints/categories").json()["data"]["items"]
+            assert len(first) == 3
+
+            # 실제 단어 벡터에서는 소속 민원도 카테고리 중심 유사도가 배정 기준보다 낮을 수 있다.
+            # 기준을 높여 그 상황(다시 분석하면 배정되지 않고 다시 후보가 됨)을 만든다
+            strict = load_analysis_config()
+            strict = strict.model_copy(
+                update={"assignment": strict.assignment.model_copy(update={"threshold": 0.999})}
+            )
+            monkeypatch.setattr(complaint_handler, "load_analysis_config", lambda: strict)
+            res = client.post(
+                f"/api/v1/files/{file_id}/analysis",
+                json={"type": "complaint", "mapping": MAPPING, "attributeMethod": "rule"},
+            )
+            assert res.status_code == 202, res.text
+            run_worker(client)
+
+            again = client.get("/api/v1/complaints/categories").json()["data"]["items"]
+            assert sorted(c["categoryId"] for c in again) == sorted(c["categoryId"] for c in first)
+            stats = client.get("/api/v1/complaints/stats").json()["data"]
+            assert stats["assignment"]["unassigned"] == 0
+    finally:
+        with MongoClient[dict[str, object]](TEST_URI) as mongo:
+            mongo.drop_database(settings.mongodb_db_name)
