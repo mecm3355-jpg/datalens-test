@@ -12,6 +12,7 @@ import { AppError } from "../api/AppError";
 import type { ApiDashboardSummary, ComplaintAnalysisOptions } from "../api/datalens";
 import {
   useApiWorkspace,
+  type AutoOcrState,
   type UploadLifecycleCallbacks,
   type UploadResult,
 } from "../hooks/useApiWorkspace";
@@ -65,6 +66,8 @@ type WorkspaceValue = {
   requestAnalysis: (fileId: string, options?: ComplaintAnalysisOptions) => Promise<void>;
   analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
   uploadedSource: (fileId: string) => File | null;
+  // 스캔 PDF 브라우저 OCR 자동 진행 상태(데모 모드나 진행한 적 없으면 null)
+  autoOcrStatus: (fileId: string) => AutoOcrState | null;
   reportForFile: (fileId: string) => DataReport | null;
   requestReport: (fileId: string) => Promise<void>;
   cleaningDecision: (fileId: string, ruleId: string) => CleaningDecision;
@@ -290,6 +293,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         throw new AppError("DEMO_NOT_SUPPORTED", "데모 모드에서는 스캔 PDF를 분석할 수 없습니다.");
       },
       uploadedSource: (fileId) => (DATA_MODE === "api" ? api.uploadedSource(fileId) : null),
+      autoOcrStatus: (fileId) => (DATA_MODE === "api" ? api.autoOcr[fileId] ?? null : null),
       reportForFile: (fileId) => DATA_MODE === "api" ? api.reports[fileId] ?? null : null,
       requestReport: (fileId) => DATA_MODE === "api"
         ? api.requestReport(fileId)

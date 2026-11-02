@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AutoOcrState } from "../hooks/useApiWorkspace";
 import { FileDetailPage } from "./FileDetailPage";
 
 const useWorkspaceMock = vi.hoisted(() => vi.fn());
@@ -32,6 +33,7 @@ function workspace(requestAnalysis: ReturnType<typeof vi.fn>, columns = ["제목
     loading: false,
     ensureFileData: vi.fn(async () => undefined),
     uploadedSource: vi.fn((): File | null => null),
+    autoOcrStatus: vi.fn((): AutoOcrState | null => null),
     analysisRequested: vi.fn(() => false),
     requestAnalysis,
     reportForFile: vi.fn(() => null),
@@ -216,5 +218,37 @@ describe("민원 분석 카드", () => {
     fireEvent.click(await screen.findByRole("button", { name: "민원 분석 시작" }));
 
     expect((await screen.findByRole("alert")).textContent).toContain("분석에 실패했습니다.");
+  });
+
+  it("업로드 직후 자동 글자 읽기가 도는 동안에는 진행 상황을 보여 주고 다시 시작하지 못하게 한다", async () => {
+    const base = workspace(vi.fn(), []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      cleaningArtifact: vi.fn(() => ({ qualityIssues: [{ type: "no_text_layer" }] })),
+      autoOcrStatus: vi.fn((): AutoOcrState => ({ running: true, message: "글자 읽는 중 2/5쪽 · 창을 닫지 마세요." })),
+      files: [{ ...base.files[0], originalName: "스캔.pdf", extension: "pdf", fileCategory: "document" }],
+    });
+    renderPage();
+
+    expect((await screen.findByText(/글자 읽는 중 2\/5쪽/)).textContent).toContain("창을 닫지 마세요");
+    expect((screen.getByRole("button", { name: "민원 분석 시작" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("자동 글자 읽기가 끝나면 읽은 글자 파일로 가는 길을 보여 준다", async () => {
+    const base = workspace(vi.fn(), []);
+    useWorkspaceMock.mockReturnValue({
+      ...base,
+      cleaningArtifact: vi.fn(() => ({ qualityIssues: [{ type: "no_text_layer" }] })),
+      autoOcrStatus: vi.fn((): AutoOcrState => ({
+        running: false,
+        message: "읽은 글자로 민원 분석을 마쳤습니다.",
+        resultFileId: "file-ocr",
+      })),
+      files: [{ ...base.files[0], originalName: "스캔.pdf", extension: "pdf", fileCategory: "document" }],
+    });
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "읽은 글자 파일 보기" });
+    expect(link.getAttribute("href")).toBe("/files/file-ocr");
   });
 });

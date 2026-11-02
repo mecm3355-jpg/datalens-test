@@ -37,6 +37,29 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "서버 요청을 처리하지 못했습니다.";
 }
 
+/** 브라우저 OCR 자동 진행 상태입니다. resultFileId는 읽은 글자로 만든 파일입니다. */
+export type AutoOcrState = {
+  running: boolean;
+  message: string;
+  failed?: boolean;
+  resultFileId?: string;
+};
+
+/**
+ * 업로드 진단이 끝난 PDF가 글자 없는 스캔본인지 봅니다. 서버가 글자 레이어로 민원 분석까지
+ * 이어 갔으면(마지막 작업이 민원 분석) 스캔본으로 보지 않습니다.
+ * @param fileId 파일 ID
+ * @param extension 확장자
+ * @param job 업로드 뒤 마지막으로 끝난 작업
+ */
+async function isScannedPdf(fileId: string, extension: string, job: ApiJob): Promise<boolean> {
+  if (extension.toLowerCase() !== "pdf" || job.type === COMPLAINT_ANALYSIS_JOB) return false;
+  if (job.error?.code === "OCR_NOT_AVAILABLE") return true;
+  if (job.status !== "completed") return false;
+  const analysis = await datalensApi.analysis(fileId);
+  return analysis.quality.issues.some((issue) => issue.type === "no_text_layer");
+}
+
 function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -62,6 +85,7 @@ export type ApiWorkspace = {
   retryFileProcessing: (fileId: string) => Promise<void>;
   requestAnalysis: (fileId: string, options?: ComplaintAnalysisOptions) => Promise<void>;
   analyzeOcrText: (originalName: string, text: string, splitRule?: string) => Promise<string>;
+  autoOcr: Record<string, AutoOcrState>;
   requestReport: (fileId: string) => Promise<void>;
   ensureFileData: (fileId: string) => Promise<void>;
   applyCleaningRules: (fileId: string, rules: CleaningRule[]) => Promise<void>;
@@ -229,6 +253,54 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
   const uploadedSources = useRef(new Map<string, File>());
   const uploadedSource = useCallback((fileId: string) => uploadedSources.current.get(fileId) ?? null, []);
 
+  // 브라우저 OCR 결과를 텍스트 파일로 올리고 진단(서버가 서식을 알아보면 민원 분석까지)을 기다린다.
+  // 새 파일 ID와, 서버가 민원 분석까지 마쳤는지를 돌려준다
+  const uploadOcrText = useCallback(async (
+    originalName: string,
+    text: string,
+  ): Promise<{ fileId: string; analyzed: boolean }> => {
+    const file = new File([text], `${originalName}.ocr.txt`, { type: "text/plain" });
+    const uploaded = await datalensApi.upload(file);
+    const serverFile = await datalensApi.getFile(uploaded.fileId);
+    setFiles((current) => [toDataFile(serverFile), ...current]);
+    if (!serverFile.lastJobId) return { fileId: serverFile.fileId, analyzed: false };
+    const last = await pollJob(serverFile.lastJobId, serverFile.fileId);
+    if (last.status === "failed") {
+      throw new AppError(last.error?.code ?? "PROCESS_FAILED", last.error?.message ?? "글자 파일 처리에 실패했습니다.");
+    }
+    return { fileId: serverFile.fileId, analyzed: last.type === COMPLAINT_ANALYSIS_JOB };
+  }, [pollJob]);
+
+  // 스캔 PDF는 서버가 글자를 못 읽으므로, 이 창에서 올린 원본을 브라우저에서 OCR해 이어 간다.
+  // OCR은 무거워 한 번에 한 파일씩 차례로 돌린다
+  const [autoOcr, setAutoOcr] = useState<Record<string, AutoOcrState>>({});
+  const ocrQueue = useRef<Promise<void>>(Promise.resolve());
+  const runAutoOcr = useCallback((fileId: string, originalName: string, source: File) => {
+    const update = (state: AutoOcrState) => setAutoOcr((current) => ({ ...current, [fileId]: state }));
+    update({ running: true, message: "스캔본이라 이 브라우저에서 글자를 읽을 차례를 기다립니다." });
+    ocrQueue.current = ocrQueue.current.then(async () => {
+      try {
+        // OCR 라이브러리는 크므로 실제로 스캔본을 만났을 때만 불러온다
+        const { readScannedPdf } = await import("../lib/browserOcr");
+        const text = await readScannedPdf(source, (done, total) => {
+          update({ running: true, message: `글자 읽는 중 ${done}/${total}쪽 · 창을 닫지 마세요.` });
+        });
+        update({ running: true, message: "읽은 글자로 민원 분석 중" });
+        const result = await uploadOcrText(originalName, text);
+        await ensureFileData(result.fileId);
+        update(result.analyzed
+          ? { running: false, message: "읽은 글자로 민원 분석을 마쳤습니다.", resultFileId: result.fileId }
+          : {
+              running: false,
+              message: "글자는 읽었지만 문서 형식을 알아보지 못했습니다. 읽은 글자 파일에서 형식을 골라 분석하세요.",
+              resultFileId: result.fileId,
+            });
+      } catch (ocrError) {
+        update({ running: false, failed: true, message: messageOf(ocrError) });
+      }
+    });
+  }, [ensureFileData, uploadOcrText]);
+
   const addFiles = useCallback(async (
     selected: File[],
     callbacks?: UploadLifecycleCallbacks,
@@ -264,7 +336,12 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
         callbacks?.onRegistered?.(temporaryId, serverFile.fileId);
         if (serverFile.lastJobId) {
           void pollJob(serverFile.lastJobId, serverFile.fileId)
-            .then(() => ensureFileData(serverFile.fileId))
+            .then(async (job) => {
+              await ensureFileData(serverFile.fileId);
+              if (await isScannedPdf(serverFile.fileId, serverFile.extension, job)) {
+                runAutoOcr(serverFile.fileId, serverFile.originalName, file);
+              }
+            })
             .catch((pollError: unknown) => {
               patchFile(serverFile.fileId, { processingError: messageOf(pollError) });
             });
@@ -291,7 +368,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
       }
     }));
     return ids;
-  }, [ensureFileData, patchFile, pollJob]);
+  }, [ensureFileData, patchFile, pollJob, runAutoOcr]);
 
   const retryFileProcessing = useCallback(async (fileId: string): Promise<void> => {
     const started = await datalensApi.process(fileId);
@@ -315,21 +392,13 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     notifyComplaintDataChanged();
   }, [ensureFileData, pollJob]);
 
-  // 브라우저 OCR 결과를 텍스트 파일로 올려 진단이 끝나면 민원 분석까지 이어 간다. 새 파일 ID를 돌려준다.
+  // 브라우저 OCR 결과로 민원 분석까지 마친다. 서버가 서식을 알아보지 못했을 때만 고른 규칙으로 요청한다
   const analyzeOcrText = useCallback(async (originalName: string, text: string, splitRule?: string): Promise<string> => {
-    const file = new File([text], `${originalName}.ocr.txt`, { type: "text/plain" });
-    const uploaded = await datalensApi.upload(file);
-    const serverFile = await datalensApi.getFile(uploaded.fileId);
-    setFiles((current) => [toDataFile(serverFile), ...current]);
-    if (serverFile.lastJobId) {
-      const diagnosis = await pollJob(serverFile.lastJobId, serverFile.fileId);
-      if (diagnosis.status === "failed") {
-        throw new AppError(diagnosis.error?.code ?? "PROCESS_FAILED", diagnosis.error?.message ?? "글자 파일 진단에 실패했습니다.");
-      }
-    }
-    await requestAnalysis(serverFile.fileId, { splitRule });
-    return serverFile.fileId;
-  }, [pollJob, requestAnalysis]);
+    const { fileId, analyzed } = await uploadOcrText(originalName, text);
+    if (!analyzed) await requestAnalysis(fileId, { splitRule });
+    await ensureFileData(fileId);
+    return fileId;
+  }, [ensureFileData, requestAnalysis, uploadOcrText]);
 
   const requestReport = useCallback(async (fileId: string): Promise<void> => {
     const started = await datalensApi.createReport(fileId);
@@ -376,6 +445,7 @@ export function useApiWorkspace(enabled: boolean): ApiWorkspace {
     retryFileProcessing,
     requestAnalysis,
     analyzeOcrText,
+    autoOcr,
     requestReport,
     ensureFileData,
     applyCleaningRules,

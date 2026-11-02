@@ -301,7 +301,7 @@ def test_scan_without_ocr_says_ocr_is_missing(db_client: TestClient) -> None:
 
 
 def test_ocr_text_file_is_split_by_rule(db_client: TestClient) -> None:
-    """브라우저 OCR 결과(텍스트 파일)도 분리 규칙으로 민원별로 나뉜다."""
+    """브라우저 OCR 결과(텍스트)는 국민신문고 서식을 알아보고 자동으로 민원별로 나눠 분석한다."""
     forms = [
         f"번호 {n}\n제목 가로등 고장 신고 {n}\n처리기관 포항시\n등록일 2026-10-2{n}\n조회수 3"
         for n in range(1, 4)
@@ -310,14 +310,8 @@ def test_ocr_text_file_is_split_by_rule(db_client: TestClient) -> None:
     file_id = db_client.post(
         "/api/v1/files", files={"file": ("a.pdf.ocr.txt", body, "text/plain")}
     ).json()["data"]["fileId"]
-    run_worker(db_client)
 
-    started = db_client.post(
-        f"/api/v1/files/{file_id}/analysis",
-        json={"type": "complaint", "splitRule": "sinmungo", "attributeMethod": "rule"},
-    )
-    assert started.status_code == 202
-    run_worker(db_client)
+    assert run_worker(db_client) == 2  # 추출·진단 → 규칙을 찾아 민원 분석
 
     items = db_client.get("/api/v1/complaints").json()["data"]["items"]
     mine = [item for item in items if item["fileId"] == file_id]
@@ -530,3 +524,15 @@ def test_stats_show_pending_candidates_before_first_approval(db_client: TestClie
     other_month = db_client.get("/api/v1/complaints/stats?period=2026-02").json()["data"]
     assert (other_month["period"], other_month["total"]) == ("2026-02", 0)
     assert db_client.get("/api/v1/complaints/stats?period=2026-2").status_code == 422
+
+
+def test_text_without_known_form_waits_for_rule(db_client: TestClient) -> None:
+    """맞는 나누기 규칙이 없는 텍스트는 자동으로 분석하지 않고 사람이 고르기를 기다린다."""
+    body = "회의록\n\n오늘 안건은 예산입니다.\n".encode()
+    file_id = upload(db_client, "memo.txt", body)
+
+    assert run_worker(db_client) == 1
+
+    detail = db_client.get(f"/api/v1/files/{file_id}").json()["data"]
+    job = db_client.get(f"/api/v1/jobs/{detail['lastJobId']}").json()["data"]
+    assert job["type"] == "analyze"
