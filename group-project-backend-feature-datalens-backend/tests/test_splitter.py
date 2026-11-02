@@ -5,7 +5,7 @@ import pytest
 
 from app.core.errors import AppError
 from app.processors.document import DocLine
-from app.processors.splitter import FormRule, load_split_rules, split_by_form
+from app.processors.splitter import FormRule, detect_rule, load_split_rules, split_by_form
 
 RULE = FormRule(
     start_label="번호",
@@ -111,3 +111,20 @@ def test_normalize_field(value: str, kind: Literal["date", "digits"], expected: 
     from app.processors.splitter import normalize_field
 
     assert normalize_field(value, kind) == expected
+
+
+def test_detect_rule_picks_matching_form() -> None:
+    rules = {"sinmungo": RULE}
+    lines = [DocLine(text=t) for n in (1, 2) for t in (f"번호 {n}", f"제목 민원 {n}")]
+
+    assert detect_rule(lines, rules) == "sinmungo"
+
+
+def test_detect_rule_needs_repeated_start_label() -> None:
+    rules = {"sinmungo": RULE}
+    # 표지가 한 번뿐이거나, 시작 표지 없이 다른 표지만 맞으면 서식으로 보지 않는다
+    once = [DocLine(text="번호 1"), DocLine(text="제목 민원 1")]
+    no_start = [DocLine(text="제목 회의 안건"), DocLine(text="등록일 2026-10-01")]
+
+    assert detect_rule(once, rules) is None
+    assert detect_rule(no_start, rules) is None

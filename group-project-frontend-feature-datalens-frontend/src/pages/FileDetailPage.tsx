@@ -453,7 +453,9 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
   scanned: boolean;
   diagnosisReady: boolean;
 }) {
-  const { requestAnalysis, analyzeOcrText, ensureFileData, uploadedSource } = useWorkspace();
+  const { requestAnalysis, analyzeOcrText, ensureFileData, uploadedSource, autoOcrStatus } = useWorkspace();
+  // 업로드 직후 스캔본이면 브라우저 OCR이 자동으로 돈다. 그동안은 같은 일을 또 시작하지 않게 막는다
+  const autoOcr = autoOcrStatus(file.id);
   const navigate = useNavigate();
   const [scanSource, setScanSource] = useState<File | null>(null);
   const [ocrProgress, setOcrProgress] = useState<string | null>(null);
@@ -473,6 +475,7 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
   // 진단 결과 요청이 실패하면 기다려도 오지 않으므로 다시 불러올 길을 준다
   const diagnosisFailed = waitingDiagnosis && !isReloading && Boolean(file.processingError);
   const canStart = !waitingDiagnosis
+    && !autoOcr?.running
     && (!scanned || pdfSource !== null);
 
   const reloadDiagnosis = async () => {
@@ -558,6 +561,16 @@ function ComplaintAnalysisCard({ file, complaintCount, scanned, diagnosisReady }
         <div className="chips notice">
           <Button variant="secondary" to="/complaints">민원 보기</Button>
           <Button variant="secondary" to="/categories/candidates">신규 후보 보기</Button>
+        </div>
+      ) : null}
+      {autoOcr ? (
+        <div className="notice" role={autoOcr.failed ? "alert" : "status"}>
+          <p className={autoOcr.failed ? "feedback feedback-error" : "caption"}>
+            {autoOcr.failed ? `자동 글자 읽기 실패: ${autoOcr.message}` : autoOcr.message}
+          </p>
+          {autoOcr.resultFileId ? (
+            <Button variant="secondary" to={`/files/${autoOcr.resultFileId}`}>읽은 글자 파일 보기</Button>
+          ) : null}
         </div>
       ) : null}
       {ocrProgress ? <p className="caption" role="status">{ocrProgress}</p> : null}

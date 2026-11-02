@@ -193,3 +193,29 @@ def split_by_form(lines: Iterable[DocLine], rule: FormRule) -> list[FormRecord]:
                 record.fields[key] = normalize_field(record.fields[key], kind)
     # 내용 필드가 비면 분석할 글이 없으므로 민원으로 내보내지 않는다(목차·빈 서식 등)
     return [r for r in records if r.fields.get(rule.content_field)]
+
+
+# 규칙을 자동으로 고를 때 필요한 최소 건수. 한 건뿐이면 우연히 표지 하나가 맞은 문서일 수 있다
+MIN_DETECTED_RECORDS = 2
+
+
+def detect_rule(lines: Iterable[DocLine], rules: dict[str, FormRule]) -> str | None:
+    """문서 줄에 맞는 분리 규칙 이름을 고른다. 맞는 규칙이 없으면 None.
+
+    규칙마다 실제로 나눠 보고, 시작 표지로 열린 민원이 MIN_DETECTED_RECORDS건 이상인 규칙 중
+    가장 많이 나뉜 규칙을 고른다(사람이 규칙을 고르지 않아도 분석을 시작하기 위함).
+
+    파라미터:
+        lines: open_document의 entries 또는 텍스트 줄
+        rules: 분리 규칙 목록(load_split_rules)
+    """
+    materialized = list(lines)
+    best: tuple[int, str] | None = None
+    for name, rule in rules.items():
+        start_key = next((k for k, label in rule.fields.items() if label == rule.start_label), None)
+        records = split_by_form(materialized, rule)
+        # 시작 표지 없이 다른 표지로 열린 건은 세지 않는다(서식이 아닌 문서의 우연한 일치 방지)
+        count = sum(1 for record in records if start_key in record.fields)
+        if count >= MIN_DETECTED_RECORDS and (best is None or count > best[0]):
+            best = (count, name)
+    return None if best is None else best[1]
