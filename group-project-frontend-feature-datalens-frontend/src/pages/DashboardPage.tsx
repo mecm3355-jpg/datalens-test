@@ -1,129 +1,131 @@
-import { Link } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { Link } from "react-router";
+import { Button } from "../components/Button";
+import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
-import { formatNumber } from "../lib/format";
-import type { ComplaintStats } from "../lib/remote";
-import { useCatalog } from "../state/catalog";
-import type { Category } from "../types";
+import { FILE_STATUS_LABEL } from "../lib/labels";
+import { formatBytes, formatDate, formatNumber } from "../lib/format";
+import { useWorkspace } from "../state/workspace";
+import type { FileStatus } from "../types";
 
-/** 대시보드의 카테고리 한 줄: 이름과 분석된 민원 건수. */
-type CategoryRow = { categoryId: string; name: string; count: number };
+const STATUS_ORDER: FileStatus[] = ["completed", "processing", "queued", "failed"];
+const StatusChart = lazy(() => import("../components/StatusChart").then((module) => ({ default: module.StatusChart })));
 
-/** 상위 그룹 하나와 그 안의 카테고리들. */
-type GroupRows = { group: string; count: number; rows: CategoryRow[] };
-
-/**
- * 서버 집계(카테고리 ID별 건수)를 상위 그룹별로 묶는다. 건수 많은 순, 0건 카테고리는 뒤에 둔다.
- * @param categories 현재 체계의 카테고리(이름·그룹)
- * @param stats 서버 집계
- */
-export function groupRows(categories: Category[], stats: ComplaintStats): GroupRows[] {
-  const counts = new Map(stats.categoriesTotal.flatMap((item) => (item.label ? [[item.label, item.count] as const] : [])));
-  const groups = new Map<string, CategoryRow[]>();
-  for (const category of categories) {
-    const rows = groups.get(category.group) ?? [];
-    rows.push({ categoryId: category.categoryId, name: category.name, count: counts.get(category.categoryId) ?? 0 });
-    groups.set(category.group, rows);
-  }
-  return [...groups.entries()]
-    .map(([group, rows]) => ({
-      group,
-      count: rows.reduce((sum, row) => sum + row.count, 0),
-      rows: [...rows].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "ko")),
-    }))
-    .sort((a, b) => b.count - a.count || a.group.localeCompare(b.group, "ko"));
-}
-
-/** 분석을 마친 민원을 카테고리별 건수로 보여 줍니다. */
 export function DashboardPage() {
-  const { categories, stats, status } = useCatalog();
-
-  if (!stats) {
-    return (
-      <div className="page">
-        <PageIntro title="카테고리별 민원" lede={status === "loading" ? "불러오는 중입니다." : "집계를 불러오지 못했습니다."} />
-      </div>
-    );
-  }
-
-  const unassigned = stats.categoriesTotal.find((item) => item.label === null)?.count ?? 0;
-  const groups = groupRows(categories, stats);
-  const max = Math.max(1, ...groups.flatMap((group) => group.rows.map((row) => row.count)), unassigned);
+  const workspace = useWorkspace();
+  const serverSummary = workspace.dashboardSummary;
+  const statusCounts = Object.fromEntries(
+    STATUS_ORDER.map((status) => [status, workspace.files.filter((file) => file.status === status).length]),
+  ) as Record<FileStatus, number>;
+  const qualityRows = workspace.files.flatMap((file) => {
+    const profile = workspace.cleaningArtifact(file.id)?.analysis?.quality;
+    return profile ? [{ file, profile }] : [];
+  });
+  const localAverageQuality = qualityRows.length > 0
+    ? Math.round(qualityRows.reduce((sum, row) => sum + row.profile.score, 0) / qualityRows.length)
+    : null;
+  const averageQuality = serverSummary?.quality.averageScore ?? localAverageQuality;
+  const totalFiles = workspace.files.length;
+  const recentFiles = [...workspace.files]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 6);
+  const statusChartData = STATUS_ORDER.map((status) => ({ label: FILE_STATUS_LABEL[status], count: statusCounts[status] }));
 
   return (
     <div className="page">
       <PageIntro
-        title="카테고리별 민원"
-        lede={
-          stats.total > 0
-            ? `분석을 마친 민원 ${formatNumber(stats.total)}건 · 카테고리 배정 ${formatNumber(stats.total - unassigned)}건 · 미분류 ${formatNumber(unassigned)}건`
-            : "아직 분석된 민원이 없습니다. 파일 메뉴에서 파일을 올리면 자동으로 분석합니다."
+        size="md"
+        eyebrow="데이터 품질 작업공간"
+        title="파일과 품질 상태를 한눈에"
+        lede="파일 수집부터 형식 검증, 품질 진단, 규칙 승인, 정제 결과 비교와 다운로드까지 한 흐름으로 관리합니다."
+        actions={
+          <>
+            <Button variant="pill" to="/files">파일 업로드</Button>
+            <Button variant="secondary" to="/data">분석 리포트</Button>
+          </>
         }
       />
 
-      {stats.total === 0 ? (
-        <Link className="link" to="/files">
-          파일 올리러 가기
-        </Link>
-      ) : null}
+      <section className="stat-row" aria-label="파일 처리 현황">
+        <DashboardStat label="전체 파일" value={formatNumber(totalFiles)} foot="등록된 원본" />
+        <DashboardStat label="완료" value={formatNumber(statusCounts.completed)} foot="분석 가능" />
+        <DashboardStat label="처리 중" value={formatNumber(statusCounts.processing + statusCounts.queued)} foot="대기 포함" />
+        <DashboardStat label="실패" value={formatNumber(statusCounts.failed)} foot="재시도 필요" />
+        <DashboardStat label="평균 품질" value={averageQuality === null ? "—" : `${averageQuality}점`} foot="분석 완료 파일" />
+      </section>
 
-      {groups.map((group) => (
-        <section className="card" key={group.group} aria-label={`${group.group} ${group.count}건`}>
+      <section className="split">
+        <article className="card">
           <div className="card-head">
-            <h2 className="title-sm">{group.group}</h2>
-            <span className="num">{formatNumber(group.count)}건</span>
+            <div><h2 className="title-sm">최근 파일</h2><p className="caption">파일별 처리 상태와 분석 지원 여부</p></div>
+            <Link className="link" to="/files">전체 파일</Link>
           </div>
-          <ul className="category-counts">
-            {group.rows.map((row) => (
-              <CountRow key={row.categoryId} label={row.name} count={row.count} max={max} />
-            ))}
+          <DataTable
+            framed={false}
+            rows={recentFiles}
+            rowKey={(file) => file.id}
+            empty="업로드한 파일이 없습니다."
+            columns={[
+              { key: "name", header: "파일", render: (file) => <Link className="link file-name-link" to={`/files/${file.id}`}>{file.originalName}</Link> },
+              { key: "format", header: "형식", render: (file) => file.extension.toUpperCase() },
+              { key: "size", header: "크기", numeric: true, render: (file) => formatBytes(file.sizeBytes) },
+              { key: "status", header: "상태", render: (file) => <span className={`pill status-pill status-${file.status}`}>{FILE_STATUS_LABEL[file.status]}</span> },
+              { key: "date", header: "등록일", numeric: true, render: (file) => formatDate(file.createdAt) },
+            ]}
+          />
+        </article>
+
+        <article className="card">
+          <div className="card-head"><h2 className="title-sm">처리 상태 분포</h2></div>
+          <Suspense fallback={<div className="chart-placeholder">차트를 불러오는 중입니다.</div>}>
+            <StatusChart data={statusChartData} />
+          </Suspense>
+          <ul className="status-distribution">
+            {STATUS_ORDER.map((status) => {
+              const count = statusCounts[status];
+              const percentage = totalFiles === 0 ? 0 : (count / totalFiles) * 100;
+              return (
+                <li key={status}>
+                  <div className="status-distribution-label"><span>{FILE_STATUS_LABEL[status]}</span><span className="num">{formatNumber(count)}</span></div>
+                  <div className="quality-track" aria-label={`${FILE_STATUS_LABEL[status]} ${percentage.toFixed(0)}%`}><span style={{ width: `${percentage}%` }} /></div>
+                </li>
+              );
+            })}
           </ul>
-        </section>
-      ))}
-
-      {unassigned > 0 ? (
-        <section className="card" aria-label={`미분류 ${unassigned}건`}>
-          <div className="card-head">
-            <h2 className="title-sm">미분류</h2>
-            <span className="num">{formatNumber(unassigned)}건</span>
+          <div className="notice">
+            <p className="caption">{workspace.dataMode === "api" ? "서버 처리 범위" : "데모 처리 범위"}</p>
+            <p className="body">CSV·JSON·TXT·LOG는 내용과 기본 통계를 분석하고, JPG·PNG는 실제 형식과 해상도를 확인합니다.</p>
           </div>
-          <p className="caption">
-            {stats.pendingCandidateCount > 0
-              ? `비슷한 민원끼리 신규 후보 ${stats.pendingCandidateCount}개로 묶어 두었습니다. 후보를 승인하면 카테고리가 생기고 그 민원이 배정됩니다.`
-              : "아직 어느 카테고리에도 속하지 않은 민원입니다."}
-          </p>
-          {stats.pendingCandidates.length > 0 ? (
-            <ul className="category-counts">
-              {stats.pendingCandidates.map((candidate) => (
-                <CountRow
-                  key={candidate.candidateId}
-                  label={`${candidate.suggestedName} (후보)`}
-                  count={candidate.size}
-                  max={max}
-                />
-              ))}
-            </ul>
-          ) : null}
-          {stats.pendingCandidateCount > 0 ? (
-            <Link className="link" to="/categories/candidates">
-              후보 승인하러 가기
-            </Link>
-          ) : null}
-        </section>
-      ) : null}
+        </article>
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <div><h2 className="title-sm">파일별 품질 지표</h2><p className="caption">완전성 35% · 유일성 25% · 유효성 20% · 일관성 20%</p></div>
+          <Link className="link" to="/data">분석 상세</Link>
+        </div>
+        <DataTable
+          framed={false}
+          rows={qualityRows}
+          rowKey={(row) => row.file.id}
+          empty={workspace.dataMode === "api"
+            ? "파일 상세에서 분석 결과를 열면 파일별 품질 지표가 표시됩니다. 전체 평균은 서버 집계를 사용합니다."
+            : "브라우저에서 새 CSV 또는 JSON 파일을 업로드하면 품질 지표가 표시됩니다."}
+          columns={[
+            { key: "file", header: "파일", render: (row) => <Link className="link" to={`/files/${row.file.id}`}>{row.file.originalName}</Link> },
+            { key: "score", header: "종합", numeric: true, render: (row) => `${row.profile.score}점` },
+            { key: "complete", header: "완전성", numeric: true, render: (row) => `${row.profile.completeness}%` },
+            { key: "unique", header: "유일성", numeric: true, render: (row) => `${row.profile.uniqueness}%` },
+            { key: "valid", header: "유효성", numeric: true, render: (row) => `${row.profile.validity}%` },
+            { key: "consistent", header: "일관성", numeric: true, render: (row) => `${row.profile.consistency}%` },
+          ]}
+        />
+      </section>
     </div>
   );
 }
 
-/** 이름, 건수, 가장 많은 항목 대비 막대. */
-function CountRow({ label, count, max }: { label: string; count: number; max: number }) {
-  const width = (count / max) * 100;
-  return (
-    <li className="category-count">
-      <span className="category-count-name">{label}</span>
-      <span className="category-count-bar" aria-hidden="true">
-        <span style={{ width: `${width}%` }} />
-      </span>
-      <span className="num category-count-value">{formatNumber(count)}건</span>
-    </li>
-  );
+/** 대시보드 핵심 지표의 이름, 값, 보조 설명을 표시합니다. */
+function DashboardStat({ label, value, foot }: { label: string; value: string; foot: string }) {
+  return <article className="stat"><p className="stat-label">{label}</p><p className="stat-value">{value}</p><p className="stat-foot">{foot}</p></article>;
 }

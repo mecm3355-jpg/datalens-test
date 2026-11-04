@@ -118,23 +118,14 @@ async def list_category_changes(service: Service) -> ApiResponse[CategoryChangeL
 
 
 @router.get("/stats", response_model=ApiResponse[ComplaintStats])
-async def get_complaint_stats(
-    service: Service,
-    period: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
-) -> ApiResponse[ComplaintStats]:
-    """대시보드 현황: 최근 두 기간 카테고리 비교, 배정 상태·그룹·지역·긴급도·월별 건수,
-    승인 대기 후보(임시 분류)와 검토 대기 건수.
-
-    파라미터:
-        service: 민원 분석 서비스
-        period: 배정 상태·그룹·지역·긴급도를 셀 처리 월(YYYY-MM). 생략하면 전체 기간
-    """
-    return ok(await service.stats(period))
+async def get_complaint_stats(service: Service) -> ApiResponse[ComplaintStats]:
+    """최근 두 기간의 카테고리별 민원 수를 조회한다."""
+    return ok(await service.stats())
 
 
 @router.get("/insights", response_model=ApiResponse[ComplaintInsights])
 async def get_complaint_insights(service: Service) -> ApiResponse[ComplaintInsights]:
-    """증가·긴급·재신고·승인 대기 후보 규칙 기반 인사이트를 조회한다."""
+    """증가·긴급·재신고 규칙 기반 인사이트를 조회한다."""
     return ok(await service.insights())
 
 
@@ -164,11 +155,10 @@ async def list_candidates(
 async def decide_candidate(
     service: Service, candidate_id: str, request: CandidateDecisionRequest, admin: AdminUser
 ) -> ApiResponse[CandidateDecisionResult]:
-    """후보를 승인·보류·기존 카테고리에 합친다(관리자만). 승인하면 체계 버전이 올라간다.
+    """후보를 승인·보류·기존 카테고리에 합친다. 승인하면 체계 버전이 올라간다.
 
     파라미터:
         service: 민원 분석 서비스
-        admin: 로그인한 관리자(인증이 꺼져 있으면 None)
         candidate_id: 후보 ID
         request: 결정 내용
     """
@@ -211,11 +201,10 @@ async def list_reviews(
 async def save_review(
     service: Service, review_id: str, request: ReviewDecisionRequest, admin: AdminUser
 ) -> ApiResponse[ReviewItem]:
-    """검토 결과를 저장한다(관리자만. 카테고리 확정 또는 현재 배정 확인).
+    """검토 결과를 저장한다(카테고리 확정 또는 현재 배정 확인).
 
     파라미터:
         service: 민원 분석 서비스
-        admin: 로그인한 관리자(인증이 꺼져 있으면 None)
         review_id: 검토 ID
         request: 확정 카테고리와 검토자
     """

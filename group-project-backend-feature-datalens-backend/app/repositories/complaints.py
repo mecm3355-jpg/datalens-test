@@ -178,40 +178,6 @@ class ComplaintRepository(BaseRepository[ComplaintDocument]):
                 counts[str(row["_id"])] = count
         return counts
 
-    async def counts_by(self, field: str, period: str | None = None) -> dict[str | None, int]:
-        """활성 민원을 한 필드 값별로 센다. 값이 없는 민원은 None 키로 모은다.
-
-        파라미터:
-            field: DB 필드 경로(예: assignStatus, group, region, attributes.urgency, period)
-            period: 처리 월(YYYY-MM). None이면 전체 기간
-        """
-        query: dict[str, object] = {"status": "active"}
-        if period is not None:
-            query["period"] = period
-        pipeline: list[dict[str, object]] = [
-            {"$match": self._scoped(query)},
-            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
-        ]
-        cursor = await self.collection.aggregate(pipeline)
-        counts: dict[str | None, int] = {}
-        async for row in cursor:
-            key = row.get("_id")
-            count = row.get("count")
-            if isinstance(count, int):
-                counts[key if isinstance(key, str) else None] = count
-        return counts
-
-    async def active_ids_by_file(self, file_id: ObjectId) -> list[ObjectId]:
-        """한 파일의 활성 민원 _id 목록.
-
-        파라미터:
-            file_id: 파일 _id
-        """
-        cursor = self.collection.find(
-            self._scoped({"fileId": file_id, "status": "active"}), {"_id": 1}
-        )
-        return [row["_id"] async for row in cursor if isinstance(row["_id"], ObjectId)]
-
     async def count_active(self, query: dict[str, object]) -> int:
         """추가 조건에 맞는 활성 민원 수를 센다."""
         return await self.collection.count_documents(self._scoped({"status": "active", **query}))

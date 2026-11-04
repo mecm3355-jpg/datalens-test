@@ -1,28 +1,24 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { DataTable } from "../components/DataTable";
 import { PageIntro } from "../components/PageIntro";
+import { datalensApi, fromApiMapping } from "../api/datalens";
+import {
+  jobByFileId,
+  qualityByFile,
+  stages,
+} from "../data/mock";
 import { formatBytes, formatDate, formatNumber, formatRatio } from "../lib/format";
 import { FILE_STATUS_LABEL, MAPPING_FIELDS, SEVERITY_LABEL } from "../lib/labels";
-import { loadJob, loadMapping, loadPreview, loadQuality } from "../lib/remote";
-import { useCatalog } from "../state/catalog";
-import { useProgress } from "../state/progress";
-import type { DataFile, Job, JobStatus, MappingField, QualityIssue } from "../types";
+import { useWorkspace } from "../state/workspace";
+import { useComplaintData } from "../state/complaintData";
+import type { DataFile, JobStatus, MappingField } from "../types";
 
-const STAGES: Array<{ id: string; label: string }> = [
-  { id: "validating", label: "형식 검증" },
-  { id: "parsing", label: "추출" },
-  { id: "masking", label: "마스킹" },
-  { id: "embedding", label: "임베딩" },
-  { id: "assigning", label: "배정" },
-  { id: "discovering", label: "발견" },
-  { id: "issue_grouping", label: "이슈 묶기" },
-  { id: "statistics", label: "집계" },
-  { id: "ai_summary", label: "요약" },
-];
-
-const MAPPED_FIELDS: MappingField[] = ["content", "receivedAt", "region", "longitude", "latitude", "agency", "sourceId"];
+type UploadedPreviewRow = {
+  id: string;
+  values: Record<string, string>;
+};
 
 export function FileDetailPage() {
   const { fileId = "" } = useParams();
@@ -30,92 +26,85 @@ export function FileDetailPage() {
 }
 
 function FileDetail({ fileId }: { fileId: string }) {
-  const { files, complaintsByFile, requestAnalysis, deleteFile, status, busy } = useCatalog();
+  const { complaints } = useComplaintData();
+  const {
+    files,
+    analysisRequested,
+    requestAnalysis,
+    retryFileProcessing,
+    cleaningRows,
+    cleaningArtifact,
+    ensureFileData,
+    deleteFile,
+    jobForFile,
+    dataMode,
+    loading,
+  } = useWorkspace();
   const navigate = useNavigate();
-  const file = files.find((item) => item.id === fileId);
-  const [columns, setColumns] = useState<string[]>([]);
-  const [lines, setLines] = useState<string[]>([]);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isResolvingFile, setIsResolvingFile] = useState(dataMode === "api");
   const [mapping, setMapping] = useState<Partial<Record<string, MappingField>>>({});
-  const [swapped, setSwapped] = useState(false);
-  const [quality, setQuality] = useState<QualityIssue[]>([]);
-  const [job, setJob] = useState<Job | null>(null);
-
+  const [mappingNotes, setMappingNotes] = useState<string[]>([]);
+  const [mappingSaved, setMappingSaved] = useState(false);
+  const initializedMappingFile = useRef("");
+  const file = files.find((item) => item.id === fileId);
   useEffect(() => {
-    let cancelled = false;
-    loadPreview(fileId)
-      .then((preview) => {
-        if (cancelled) return;
-        if (preview.columns) setColumns(preview.columns);
-        setLines(preview.lines ?? []);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [fileId]);
-
-  useEffect(() => {
-    if (file?.fileCategory !== "tabular") return;
-    let cancelled = false;
-    loadMapping(fileId)
-      .then((suggestion) => {
-        if (cancelled) return;
-        if (suggestion.columns.length > 0) setColumns(suggestion.columns);
-        const next: Partial<Record<string, MappingField>> = {};
-        for (const field of MAPPED_FIELDS) {
-          const column = suggestion.mapping[field];
-          if (typeof column === "string" && column) next[column] = field;
-        }
-        setMapping(next);
-        setSwapped(suggestion.notes.some((note) => note.includes("위도") && note.includes("경도")));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [file?.fileCategory, fileId]);
-
-  useEffect(() => {
-    const jobId = file?.lastJobId;
-    if (!jobId) {
-      setJob(null);
+    if (dataMode !== "api") {
+      setIsResolvingFile(false);
       return;
     }
-    let cancelled = false;
-    loadJob(jobId)
-      .then((next) => {
-        if (!cancelled) setJob(next);
-      })
-      .catch(() => {
-        if (!cancelled) setJob(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [file?.lastJobId, file?.status]);
 
+    let active = true;
+    setIsResolvingFile(true);
+    void ensureFileData(fileId).finally(() => {
+      if (active) setIsResolvingFile(false);
+    });
+    return () => {
+      active = false;
+    };
+    // fileId is the loading boundary; provider state updates must not retrigger the request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataMode, fileId]);
   useEffect(() => {
-    if (!file || (file.status !== "completed" && file.status !== "failed")) {
-      setQuality([]);
-      return;
+    if (!file || file.fileCategory !== "tabular") return;
+    if (initializedMappingFile.current === file.id) return;
+    initializedMappingFile.current = file.id;
+    const storageKey = `datalens:file-mapping:${file.id}`;
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved) {
+        setMapping(JSON.parse(saved) as Partial<Record<string, MappingField>>);
+        setMappingSaved(true);
+        return;
+      }
+    } catch {
+      // 저장소가 차단된 브라우저에서도 서버 제안으로 계속 진행합니다.
     }
-    let cancelled = false;
-    loadQuality(file.id)
-      .then((issues) => {
-        if (!cancelled) setQuality(issues);
-      })
-      .catch(() => {
-        if (!cancelled) setQuality([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [file]);
-
+    if (dataMode === "api" && file.status === "completed") {
+      void datalensApi.mappingSuggestion(file.id)
+        .then((suggestion) => {
+          setMapping(fromApiMapping(suggestion.mapping));
+          setMappingNotes(suggestion.notes);
+        })
+        .catch(() => {
+          setMapping(file.mapping);
+        });
+    } else {
+      setMapping(file.mapping);
+    }
+  }, [dataMode, file]);
+  if (!file && (loading || isResolvingFile)) {
+    return (
+      <div className="page">
+        <PageIntro title="파일 정보를 불러오는 중입니다" lede="잠시만 기다려 주세요." />
+      </div>
+    );
+  }
   if (!file) {
     return (
       <div className="page">
-        <PageIntro title={status === "loading" ? "파일을 불러오는 중" : "파일을 찾을 수 없습니다"} />
+        <PageIntro title="파일을 찾을 수 없습니다" />
         <Button variant="secondary" to="/files">
           파일 목록
         </Button>
@@ -123,7 +112,67 @@ function FileDetail({ fileId }: { fileId: string }) {
     );
   }
 
-  const preview = complaintsByFile(file.id);
+  const job = dataMode === "api" ? jobForFile(file.id) : jobByFileId(file.id);
+  const requested = analysisRequested(file.id);
+  const preview = complaints.filter((item) => item.fileId === file.id);
+  const uploadedPreview = cleaningRows(file.id).slice(0, 10).map((values, index) => ({
+    id: `uploaded-${index}`,
+    values,
+  }));
+  const artifact = cleaningArtifact(file.id);
+  const analysis = artifact?.analysis;
+  const previewColumns = file.columns.length > 0
+    ? file.columns
+    : Object.keys(uploadedPreview[0]?.values ?? {});
+  const analysisUnsupported = file.analysisSupported === false || file.fileCategory === "other";
+  const quality = cleaningArtifact(file.id)?.qualityIssues ?? qualityByFile[file.id] ?? [];
+  const processingError = file.processingError
+    ? { code: dataMode === "api" ? "SERVER_PROCESSING_FAILED" : "DEMO_PROCESSING_FAILED", message: file.processingError }
+    : job?.error;
+
+  const retryProcessing = async () => {
+    try {
+      await retryFileProcessing(file.id);
+      setRetryError(null);
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "파일 처리를 다시 시작하지 못했습니다.");
+    }
+  };
+
+  const startComplaintAnalysis = async () => {
+    if (file.fileCategory === "tabular" && !Object.values(mapping).some((field) => field === "content" || field === "title")) {
+      setRetryError("표 파일은 민원 내용 또는 민원 제목 열을 먼저 매핑해야 합니다.");
+      return;
+    }
+    try {
+      setRetryError(null);
+      await requestAnalysis(file.id, { mapping, attributeMethod: "auto" });
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "민원 분석을 시작하지 못했습니다.");
+    }
+  };
+
+  const saveMapping = () => {
+    try {
+      window.localStorage.setItem(`datalens:file-mapping:${file.id}`, JSON.stringify(mapping));
+      setMappingSaved(true);
+      setRetryError(null);
+    } catch {
+      setRetryError("브라우저에 컬럼 매핑을 저장하지 못했습니다.");
+    }
+  };
+
+  const removeFile = async () => {
+    if (!window.confirm(`'${file.originalName}' 파일과 관련 결과를 모두 삭제할까요?`)) return;
+    setIsDeleting(true);
+    try {
+      await deleteFile(file.id);
+      navigate("/files", { replace: true });
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "파일을 삭제하지 못했습니다.");
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -133,52 +182,78 @@ function FileDetail({ fileId }: { fileId: string }) {
         lede={`${formatBytes(file.sizeBytes)} · ${file.rowCount === null ? "행 수 없음" : `${formatNumber(file.rowCount)}행`} · ${formatDate(file.createdAt)}`}
         actions={
           <>
-            <Button
-              onClick={() => void requestAnalysis(file.id, mapping, defaultSplitRule(file))}
-              // 업로드 뒤 서버가 자동 분석을 이어 가는 동안(대기 포함) 다시 누르면 409가 난다
-              disabled={busy || file.status === "processing" || file.status === "queued"}
-            >
-              {job?.status === "completed" ? "다시 분석" : "분석 실행"}
-            </Button>
-            <Button
-              variant="secondary"
+            {file.status === "completed" && (file.cleaningSupported ?? file.fileCategory === "tabular") ? (
+              <Button variant="secondary" to={`/files/${file.id}/cleaning`}>정제 결과</Button>
+            ) : null}
+            {!analysisUnsupported ? <Button
               onClick={() => {
-                // 민원·검토 기록까지 함께 지워지고 되돌릴 수 없으므로 한 번 더 묻는다
-                const ok = window.confirm(
-                  `'${file.originalName}' 파일을 삭제할까요?
-이 파일에서 나온 민원·분석 결과·검토 기록도 함께 지워지며 되돌릴 수 없습니다.`,
-                );
-                if (!ok) return;
-                void deleteFile(file.id).then((deleted) => {
-                  if (deleted) navigate("/files", { replace: true });
-                });
+                if (file.status === "failed") {
+                  void retryProcessing();
+                } else {
+                  void startComplaintAnalysis();
+                }
               }}
-              disabled={busy}
+              disabled={file.status === "processing"}
             >
-              파일 삭제
+              {file.status === "processing" ? "처리 중" : file.status === "failed" ? "처리 다시 시도" : preview.length > 0 ? "민원 다시 분석" : "민원 분석 실행"}
+            </Button> : null}
+            <Button variant="secondary" onClick={() => void removeFile()} disabled={isDeleting}>
+              {isDeleting ? "삭제 중" : "파일 삭제"}
             </Button>
           </>
         }
       />
 
-      {job?.error ? (
-        <article className="card">
-          <p className="caption">실패</p>
-          <p className="error-code num">{job.error.code}</p>
-          <p className="body notice">{job.error.message}</p>
+      <article className="card">
+        <div className="card-head">
+          <h2 className="title-sm">파일 메타데이터</h2>
+          <span className={`pill ${analysisUnsupported ? "pill-pending" : ""}`}>
+            {analysisUnsupported ? "내용 분석 미지원" : analysis ? "분석 가능" : "분석 결과 대기"}
+          </span>
+        </div>
+        <dl className="attr-grid notice">
+          <div className="attr"><dt>실제 형식</dt><dd>{analysis?.detectedFormat ?? file.extension.toUpperCase()}</dd></div>
+          <div className="attr"><dt>MIME 유형</dt><dd>{file.mimeType ?? "등록 정보 없음"}</dd></div>
+          <div className="attr"><dt>파일 크기</dt><dd className="num">{formatBytes(file.sizeBytes)}</dd></div>
+          <div className="attr"><dt>등록일</dt><dd className="num">{formatDate(file.createdAt)}</dd></div>
+          <div className="attr"><dt>저장 위치</dt><dd>{file.storageLocation ?? "데모 저장소"}</dd></div>
+          <div className="attr"><dt>레코드</dt><dd className="num">{file.rowCount === null ? "—" : formatNumber(file.rowCount)}</dd></div>
+        </dl>
+      </article>
+
+      {analysisUnsupported ? (
+        <article className="card" role="status">
+          <div className="card-head">
+            <h2 className="title-sm">내용 분석을 지원하지 않는 형식입니다</h2>
+            <span className="pill pill-pending">메타데이터만</span>
+          </div>
+          <p className="body notice">
+            원본 파일과 기본 정보는 안전하게 등록되었습니다. 이 형식은 미리보기·품질 진단·정제·AI 리포트를 제공하지 않으므로 별도의 처리를 기다릴 필요가 없습니다.
+          </p>
         </article>
       ) : null}
 
-      <article className="card">
+      {processingError ? (
+        <article className="card error-card" role="alert">
+          <p className="caption">실패</p>
+          <p className="error-code num">{processingError.code}</p>
+          <p className="body notice">{processingError.message}</p>
+          <Button variant="secondary" onClick={() => void retryProcessing()}>처리 다시 시도</Button>
+          {retryError ? <p className="feedback feedback-error">{retryError}</p> : null}
+        </article>
+      ) : null}
+
+      {!analysisUnsupported ? <article className="card">
         <div className="card-head">
           <h2 className="title-sm">작업 단계</h2>
           {job ? <span className="num">{job.progress}%</span> : null}
         </div>
-        {job ? <StageTrack status={job.status} stage={job.stage} /> : <p className="empty">아직 분석 작업이 없습니다.</p>}
-        {job && job.status !== "completed" && !STAGES.some((item) => item.id === job.stage) ? (
-          <p className="caption notice">현재 단계: {job.stage}</p>
-        ) : null}
-      </article>
+        {job ? <StageTrack status={job.status} stage={job.stage} /> : null}
+        {!job && requested ? <StageTrack status="queued" stage="validating" /> : null}
+        {!job && !requested ? <p className="empty">아직 분석 작업이 없습니다.</p> : null}
+        {requested && job ? <p className="notice">같은 파일로 새 분석 작업을 대기열에 넣었습니다.</p> : null}
+        {requested && !job ? <p className="notice">분석 작업을 대기열에 넣었습니다.</p> : null}
+      </article> : null}
 
       {quality.length > 0 ? (
         <article className="card">
@@ -200,84 +275,146 @@ function FileDetail({ fileId }: { fileId: string }) {
         </article>
       ) : null}
 
-      {columns.length > 0 ? (
-        <MappingCard columns={columns} mapping={mapping} swapped={swapped} onChange={setMapping} />
+      {analysis?.quality ? (
+        <>
+          <section className="stat-row" aria-label="데이터 품질 점수">
+            <QualityStat label="종합 품질" value={`${analysis.quality.score}점`} />
+            <QualityStat label="완전성" value={`${analysis.quality.completeness}%`} />
+            <QualityStat label="유일성" value={`${analysis.quality.uniqueness}%`} />
+            <QualityStat label="유효성" value={`${analysis.quality.validity}%`} />
+            <QualityStat label="일관성" value={`${analysis.quality.consistency}%`} />
+          </section>
+          <p className="caption">종합 점수 기준: 완전성 35% · 유일성 25% · 유효성 20% · 일관성 20%</p>
+        </>
       ) : null}
 
-      {file.fileCategory !== "tabular" ? (
-        <p className="notice">
-          이 파일은 글자를 뽑아 민원별로 나눠 분석합니다.
-        </p>
+      {analysis && (analysis.numericSummaries.length > 0 || analysis.frequencies.length > 0 || analysis.textStats || analysis.imageMetadata) ? (
+        <section className="split">
+          <article className="card">
+            <div className="card-head"><h2 className="title-sm">계산 통계</h2><span className="pill">서버 계산</span></div>
+            {analysis.numericSummaries.length > 0 ? (
+              <DataTable
+                framed={false}
+                rows={analysis.numericSummaries}
+                rowKey={(row) => row.field}
+                empty="수치형 열이 없습니다."
+                columns={[
+                  { key: "field", header: "열", render: (row) => row.field },
+                  { key: "average", header: "평균", numeric: true, render: (row) => row.average.toFixed(2) },
+                  { key: "minimum", header: "최솟값", numeric: true, render: (row) => formatNumber(row.minimum) },
+                  { key: "maximum", header: "최댓값", numeric: true, render: (row) => formatNumber(row.maximum) },
+                ]}
+              />
+            ) : analysis.textStats ? (
+              <dl className="attr-grid notice">
+                <div className="attr"><dt>줄</dt><dd className="num">{formatNumber(analysis.textStats.lines)}</dd></div>
+                <div className="attr"><dt>단어</dt><dd className="num">{formatNumber(analysis.textStats.words)}</dd></div>
+                <div className="attr"><dt>문자</dt><dd className="num">{formatNumber(analysis.textStats.characters)}</dd></div>
+              </dl>
+            ) : analysis.imageMetadata ? (
+              <p className="body">이미지 해상도: <span className="num">{analysis.imageMetadata.width ?? "—"} × {analysis.imageMetadata.height ?? "—"}</span></p>
+            ) : <p className="empty">계산 가능한 통계가 없습니다.</p>}
+          </article>
+          <article className="card">
+            <div className="card-head"><h2 className="title-sm">값 빈도</h2></div>
+            {analysis.frequencies.length > 0 ? (
+              <ol className="frequency-list">
+                {analysis.frequencies.map((item) => <li key={item.value}><span>{item.value}</span><span className="num">{formatNumber(item.count)}</span></li>)}
+              </ol>
+            ) : <p className="empty">반복되는 범주형 값이 없습니다.</p>}
+          </article>
+        </section>
       ) : null}
 
-      {quality.some((issue) => issue.type === "no_text_layer") && preview.length === 0 ? (
-        <ScannedPdfCard file={file} />
+      {file.fileCategory === "tabular" && previewColumns.length > 0 ? (
+        <MappingCard
+          file={file}
+          columns={previewColumns}
+          mapping={mapping}
+          notes={mappingNotes}
+          saved={mappingSaved}
+          onChange={(next) => {
+            setMapping(next);
+            setMappingSaved(false);
+          }}
+          onSave={saveMapping}
+        />
       ) : null}
 
-      <article className="card">
+      {!analysisUnsupported ? <article className="card">
         <div className="card-head">
           <h2 className="title-sm">추출 미리보기</h2>
-          <span className="caption">
-            {preview.length > 0 ? `앞 ${formatNumber(preview.length)}건` : `앞 ${formatNumber(lines.length)}줄`}
-          </span>
+          <span className="caption">앞 {formatNumber(uploadedPreview.length || preview.length)}건</span>
         </div>
-        {preview.length === 0 && lines.length > 0 ? (
-          <ol className="stack">
-            {lines.map((line, index) => (
-              <li key={`${index}-${line}`} className="body">
-                {line}
-              </li>
-            ))}
-          </ol>
+        {analysis?.thumbnail ? (
+          <img className="file-preview-image" src={analysis.thumbnail} alt={`${file.originalName} 미리보기`} />
+        ) : null}
+        {uploadedPreview.length > 0 && previewColumns.length > 0 ? (
+          <DataTable<UploadedPreviewRow>
+            framed={false}
+            rows={uploadedPreview}
+            rowKey={(row) => row.id}
+            empty="읽을 수 있는 데이터가 없습니다."
+            columns={previewColumns.slice(0, 6).map((column) => ({
+              key: column,
+              header: column,
+              render: (row) => <span className="content-cell">{row.values[column] || "—"}</span>,
+            }))}
+          />
         ) : (
-        <DataTable
-          framed={false}
-          rows={preview}
-          rowKey={(row) => row.id}
-          empty="추출 전입니다. 미리보기는 형식 검증 뒤에 표시됩니다."
-          columns={[
-            {
-              key: "id",
-              header: "민원",
-              render: (row) => (
-                <Link className="link" to={`/complaints/${row.id}`}>
-                  {row.id}
-                </Link>
-              ),
-            },
-            { key: "date", header: "접수일", numeric: true, render: (row) => formatDate(row.receivedAt) },
-            { key: "region", header: "지역", render: (row) => row.region ?? "—" },
-            {
-              key: "locator",
-              header: "위치",
-              numeric: true,
-              render: (row) => (row.sourceLocator.row ? `행 ${row.sourceLocator.row}` : `p.${row.sourceLocator.page}`),
-            },
-            {
-              key: "content",
-              header: "본문",
-              render: (row) => <span className="content-cell">{row.contentMasked}</span>,
-            },
-            {
-              key: "similarity",
-              header: "유사도",
-              numeric: true,
-              render: (row) => (row.similarity === null ? "—" : formatRatio(row.similarity)),
-            },
-          ]}
-        />
+          <DataTable
+            framed={false}
+            rows={preview}
+            rowKey={(row) => row.id}
+            empty="추출 전입니다. 미리보기는 형식 검증 뒤에 표시됩니다."
+            columns={[
+              {
+                key: "id",
+                header: "민원",
+                render: (row) => (
+                  <Link className="link" to={`/complaints/${row.id}`}>
+                    {row.id}
+                  </Link>
+                ),
+              },
+              { key: "date", header: "접수일", numeric: true, render: (row) => formatDate(row.receivedAt) },
+              { key: "region", header: "지역", render: (row) => row.region ?? "—" },
+              {
+                key: "locator",
+                header: "위치",
+                numeric: true,
+                render: (row) => (row.sourceLocator.row ? `행 ${row.sourceLocator.row}` : `p.${row.sourceLocator.page}`),
+              },
+              {
+                key: "content",
+                header: "본문",
+                render: (row) => <span className="content-cell">{row.contentMasked}</span>,
+              },
+              {
+                key: "similarity",
+                header: "유사도",
+                numeric: true,
+                render: (row) => (row.similarity === null ? "—" : formatRatio(row.similarity)),
+              },
+            ]}
+          />
         )}
-      </article>
+      </article> : null}
     </div>
   );
 }
 
+/** 품질 지표 이름과 백분율 값을 동일한 카드 형식으로 표시합니다. */
+function QualityStat({ label, value }: { label: string; value: string }) {
+  return <article className="stat"><p className="stat-label">{label}</p><p className="stat-value">{value}</p></article>;
+}
+
 function StageTrack({ status, stage }: { status: JobStatus; stage: string }) {
-  const currentIndex = STAGES.findIndex((item) => item.id === stage);
+  const currentIndex = stages.findIndex((item) => item.id === stage);
   return (
     <div className="stage-scroll">
       <ol className="stages">
-        {STAGES.map((item, index) => {
+        {stages.map((item, index) => {
           const reached = status === "completed" || index < currentIndex;
           const current = status !== "completed" && index === currentIndex;
           const className = ["stage", reached ? "is-done" : "", current ? "is-current" : ""].filter(Boolean).join(" ");
@@ -294,15 +431,21 @@ function StageTrack({ status, stage }: { status: JobStatus; stage: string }) {
 }
 
 function MappingCard({
+  file,
   columns,
   mapping,
-  swapped,
+  notes,
+  saved,
   onChange,
+  onSave,
 }: {
+  file: DataFile;
   columns: string[];
   mapping: Partial<Record<string, MappingField>>;
-  swapped: boolean;
+  notes: string[];
+  saved: boolean;
   onChange: (mapping: Partial<Record<string, MappingField>>) => void;
+  onSave: () => void;
 }) {
   const [corrected, setCorrected] = useState(false);
 
@@ -310,7 +453,7 @@ function MappingCard({
     <article className="card">
       <div className="card-head">
         <h2 className="title-sm">컬럼 매핑</h2>
-        {swapped && !corrected ? (
+        {file.swappedAxes && !corrected ? (
           <Button
             variant="secondary"
             onClick={() => {
@@ -322,7 +465,7 @@ function MappingCard({
           </Button>
         ) : null}
       </div>
-      {swapped ? (
+      {file.swappedAxes ? (
         <p className="body">
           {corrected
             ? "경도 열은 위도 값으로, 위도 열은 경도 값으로 읽습니다."
@@ -352,72 +495,11 @@ function MappingCard({
           </label>
         ))}
       </div>
-    </article>
-  );
-}
-
-/**
- * 문서·텍스트를 다시 분석할 때 쓸 나누기 규칙. PDF와 브라우저 OCR 결과는 국민신문고 목록처럼
- * 여러 민원을 모은 경우가 많아, 파일 전체가 민원 1건으로 합쳐지지 않게 그 규칙을 기본으로 둔다.
- * @param file 대상 파일
- */
-function defaultSplitRule(file: DataFile): string | undefined {
-  if (file.fileCategory === "tabular") return undefined;
-  const name = file.originalName.toLowerCase();
-  return file.extension.toLowerCase() === "pdf" || name.endsWith(".ocr.txt") ? "sinmungo" : undefined;
-}
-
-/**
- * 글자 없는 스캔본 안내. 서버는 원본을 내려주지 않으므로, 같은 PDF를 다시 고르면 이 브라우저에서
- * 글자를 읽어 글자 파일로 올리고 서버가 민원 분석까지 이어 간다(진행은 팝업으로 보인다).
- * @param file 스캔본 PDF 파일 정보
- */
-function ScannedPdfCard({ file }: { file: DataFile }) {
-  const { readScanned, hasSource } = useCatalog();
-  const { begin } = useProgress();
-  const [error, setError] = useState("");
-
-  const start = (source?: File) => {
-    // 다른 파일을 읽지 않도록 올린 파일과 크기를 맞춰 본다
-    if (source && source.size !== file.sizeBytes) {
-      setError("올린 PDF와 크기가 다른 파일입니다. 같은 파일을 골라 주세요.");
-      return;
-    }
-    setError("");
-    const [key] = begin([{ name: file.originalName, fileId: file.id, step: "ocr", scanned: true }]);
-    void readScanned(key, file.id, source);
-  };
-
-  return (
-    <article className="card">
-      <div className="card-head">
-        <h2 className="title-sm">글자 없는 스캔본</h2>
+      {notes.length > 0 ? <p className="caption notice">제안 근거: {notes.join(" · ")}</p> : null}
+      <div className="action-row notice">
+        <Button variant="secondary" onClick={onSave}>매핑 저장</Button>
+        {saved ? <span className="pill">저장됨</span> : <span className="caption">변경 내용은 민원 분석 요청에 즉시 반영됩니다.</span>}
       </div>
-      <p className="body">
-        이 PDF는 이미지로만 되어 있어 서버가 글자를 읽지 못했습니다. 이 브라우저에서 글자를 읽으면 민원 분석까지
-        자동으로 이어집니다. 쪽수에 따라 몇 분 걸리며, 파일은 밖으로 보내지 않습니다.
-      </p>
-      {hasSource(file.id) ? (
-        <Button onClick={() => start()}>글자 읽고 분석하기</Button>
-      ) : (
-        <label className="field">
-          <span>원본 PDF 다시 선택</span>
-          <input
-            type="file"
-            accept="application/pdf,.pdf"
-            onChange={(event) => {
-              const picked = event.target.files?.[0];
-              event.target.value = "";
-              if (picked) start(picked);
-            }}
-          />
-        </label>
-      )}
-      {error ? (
-        <p className="feedback feedback-error" role="alert">
-          {error}
-        </p>
-      ) : null}
     </article>
   );
 }

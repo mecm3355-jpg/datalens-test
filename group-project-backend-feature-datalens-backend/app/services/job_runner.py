@@ -59,7 +59,6 @@ class JobRunner:
         db: AsyncDatabase[Document],
         settings: Settings,
         handlers: Mapping[str, JobHandler],
-        follow_ups: Mapping[str, JobHandler] | None = None,
     ) -> None:
         """실행기를 만든다.
 
@@ -67,13 +66,10 @@ class JobRunner:
             db: MongoDB 데이터베이스
             settings: 앱 설정(저장소 위치, 폴링 간격, 작업 제한 시간)
             handlers: 작업 종류 → 처리기. 여기 없는 종류의 작업은 가져가지 않는다
-            follow_ups: 작업 종류 → 완료 뒤 이어서 할 일(예: 진단 뒤 민원 분석 자동 시작).
-                실패해도 끝난 작업의 상태는 바꾸지 않는다
         """
         self._db = db
         self._settings = settings
         self._handlers = dict(handlers)
-        self._follow_ups = dict(follow_ups or {})
         self._jobs = JobRepository(db)
         self._files = FileRepository(db)
         self._storage = create_storage(settings.storage_provider, settings.storage_root)
@@ -167,26 +163,6 @@ class JobRunner:
             # 파일 상태도 그대로 둔다
             if await self._jobs.mark_completed(job.id):
                 await self._files.update_status(job.field, "completed")
-                await self._follow_up(context)
-
-    async def _follow_up(self, context: JobContext) -> None:
-        """끝난 작업에 이어서 할 일을 실행한다. 실패는 로그만 남기고 삼킨다.
-
-        완료 기록 뒤에 부르므로, 이어서 만든 작업이 "끝나지 않은 작업이 있음"에 막히지 않는다.
-
-        파라미터:
-            context: 방금 완료한 작업의 실행 정보
-        """
-        follow_up = self._follow_ups.get(context.job.type)
-        if follow_up is None:
-            return
-        try:
-            await follow_up(context)
-        except AppError as exc:
-            # 이어서 할 일은 편의 기능이라 원래 작업 결과를 바꾸지 않는다. 코드만 남긴다
-            logger.warning("후속 작업 건너뜀: job=%s code=%s", context.job.id, exc.code)
-        except Exception:
-            logger.exception("후속 작업 실패: job=%s type=%s", context.job.id, context.job.type)
 
     async def _fail(self, job: JobDocument, error: JobError) -> None:
         """작업과 대상 파일을 실패 상태로 기록한다.

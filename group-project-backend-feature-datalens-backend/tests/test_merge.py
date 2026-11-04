@@ -85,8 +85,7 @@ def analyzed(client: TestClient, name: str, content: bytes) -> str:
         content: 파일 내용
     """
     file_id = upload(client, name, content)
-    # 추출·진단, 민원 본문 열이 잡히면 자동 민원 분석까지
-    assert run_worker(client) >= 1
+    assert run_worker(client) == 1
     return file_id
 
 

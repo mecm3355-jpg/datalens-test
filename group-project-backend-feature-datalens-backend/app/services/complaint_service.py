@@ -6,7 +6,6 @@
 """
 
 import asyncio
-from typing import get_args
 
 import numpy as np
 from bson import ObjectId
@@ -36,18 +35,16 @@ from app.schemas.complaint import (
     ReviewDocument,
     TaxonomyChangeDocument,
 )
-from app.schemas.complaint_analysis import Category, ComplaintRecord, Urgency
+from app.schemas.complaint_analysis import Category, ComplaintRecord
 from app.schemas.complaint_api import (
     CandidateDecisionRequest,
     CandidateDecisionResult,
     ComplaintAnalysisRequest,
-    FileCategoryResult,
     ReviewDecisionRequest,
 )
 from app.schemas.job import JobDocument
 from app.schemas.mongo import utc_now
 from app.schemas.taxonomy_api import (
-    AssignmentCounts,
     CategoryChangeResult,
     CategoryMergeRequest,
     CategoryPeriodCount,
@@ -55,8 +52,6 @@ from app.schemas.taxonomy_api import (
     ComplaintInsight,
     ComplaintInsights,
     ComplaintStats,
-    LabelCount,
-    PendingCandidate,
 )
 from app.services.artifacts import job_params_key
 from app.services.assignment import assign
@@ -68,26 +63,6 @@ from app.services.storage import LocalStorage
 
 # 민원 분석을 받는 확장자: 추출기(complaint_extraction)가 다루는 형식 전부
 ANALYZABLE = TABULAR_EXTENSIONS | DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS | TEXT_EXTENSIONS
-# 현황 응답 크기 제한: 행정동은 수백 개일 수 있고, 후보는 화면 위쪽 몇 개만 보여 준다
-STATS_REGION_LIMIT = 20
-STATS_CANDIDATE_LIMIT = 10
-# 긴급도 단계 순서(속성 규칙의 Urgency 값과 같다)
-URGENCY_LEVELS: tuple[str, ...] = get_args(Urgency)
-
-
-def _by_count(counts: dict[str | None, int]) -> list[LabelCount]:
-    """값별 건수를 건수 많은 순(같으면 값 이름 순)의 목록으로 바꾼다. 값 없음(None)은 맨 뒤.
-
-    파라미터:
-        counts: 값 → 건수
-    """
-    named = sorted(
-        ((k, v) for k, v in counts.items() if k is not None), key=lambda kv: (-kv[1], kv[0])
-    )
-    items = [LabelCount(label=label, count=count) for label, count in named]
-    if counts.get(None):
-        items.append(LabelCount(label=None, count=counts[None]))
-    return items
 
 
 def parse_object_id(value: str, code: str, message: str) -> ObjectId:
@@ -409,11 +384,8 @@ class ComplaintService:
             affected_count=affected,
         )
 
-    async def _period_comparison(self) -> tuple[str | None, str | None, list[CategoryPeriodCount]]:
-        """최근 두 달과 그 두 달의 카테고리별 민원 수를 돌려준다.
-
-        파라미터: 없음
-        """
+    async def stats(self) -> ComplaintStats:
+        """최근 두 달의 카테고리별 민원 수를 비교한다."""
         periods = await self._complaints.latest_periods(2)
         current_period = periods[0] if periods else None
         previous_period = periods[1] if len(periods) > 1 else None
@@ -422,10 +394,10 @@ class ComplaintService:
             await self._complaints.category_counts(previous_period) if previous_period else {}
         )
         category_ids = sorted(set(current) | set(previous))
-        return (
-            current_period,
-            previous_period,
-            [
+        return ComplaintStats(
+            current_period=current_period,
+            previous_period=previous_period,
+            categories=[
                 CategoryPeriodCount(
                     category_id=category_id,
                     current_count=current.get(category_id, 0),
@@ -435,78 +407,23 @@ class ComplaintService:
             ],
         )
 
-    async def stats(self, period: str | None = None) -> ComplaintStats:
-        """대시보드 현황: 최근 두 달 카테고리 비교, 배정 상태·그룹·지역·긴급도·월별 건수,
-        승인 대기 후보(임시 분류)와 검토 대기 건수(PRD 8.1·8.2).
-
-        파라미터:
-            period: 배정 상태·그룹·지역·긴급도를 셀 처리 월(YYYY-MM). None이면 전체 기간
-        """
-        current_period, previous_period, categories = await self._period_comparison()
-        assignment = await self._complaints.counts_by("assignStatus", period)
-        groups = await self._complaints.counts_by("group", period)
-        by_category = await self._complaints.counts_by("categoryId", period)
-        regions = await self._complaints.counts_by("region", period)
-        urgency = await self._complaints.counts_by("attributes.urgency", period)
-        monthly = await self._complaints.counts_by("period")
-        # 후보 목록은 큰 후보부터 온다. 화면에는 위쪽 몇 개만 보여 주고 전체 수는 따로 준다
-        candidates = await self._candidates.list_by("pending", None)
-        _, pending_reviews = await self._reviews.list_page("pending", 0, 1)
-        return ComplaintStats(
-            current_period=current_period,
-            previous_period=previous_period,
-            categories=categories,
-            period=period,
-            total=sum(assignment.values()),
-            assignment=AssignmentCounts(
-                auto=assignment.get("auto", 0),
-                ambiguous=assignment.get("ambiguous", 0),
-                unassigned=assignment.get("unassigned", 0),
-                confirmed=assignment.get("confirmed", 0),
-            ),
-            groups=_by_count(groups),
-            categories_total=_by_count(by_category),
-            regions=_by_count(regions)[:STATS_REGION_LIMIT],
-            # 긴급도는 단계 순서가 의미 있으므로 건수가 아니라 단계 순으로 둔다
-            urgency=[
-                LabelCount(label=level, count=urgency[level])
-                for level in (*URGENCY_LEVELS, None)
-                if urgency.get(level)
-            ],
-            monthly=[
-                LabelCount(label=month, count=monthly[month])
-                for month in sorted(m for m in monthly if m is not None)
-            ],
-            pending_candidates=[
-                PendingCandidate(
-                    candidate_id=str(c.id),
-                    suggested_name=c.suggested_name,
-                    suggested_group=c.suggested_group,
-                    size=c.size,
-                    keywords=c.keywords,
-                )
-                for c in candidates[:STATS_CANDIDATE_LIMIT]
-            ],
-            pending_candidate_count=len(candidates),
-            pending_candidate_complaints=sum(c.size for c in candidates),
-            pending_reviews=pending_reviews,
-        )
-
     async def category_changes(self) -> list[TaxonomyChangeDocument]:
         """최근 카테고리 병합·분할 이력을 돌려준다."""
         return await self._changes.list_recent()
 
     async def insights(self) -> ComplaintInsights:
-        """증가 카테고리·긴급·재신고·승인 대기 후보 현황을 규칙 기반 인사이트로 만든다."""
-        _, _, categories = await self._period_comparison()
+        """증가 카테고리·긴급·재신고 현황을 규칙 기반 인사이트로 만든다."""
+        stats = await self.stats()
         latest = await self._categories.latest_version()
         names = {
             category.category_id: category.name
             for category in (await self._categories.list_version(latest) if latest else [])
         }
         items: list[ComplaintInsight] = []
-        if categories:
-            growth = max(categories, key=lambda item: item.current_count - item.previous_count)
+        if stats.categories:
+            growth = max(
+                stats.categories, key=lambda item: item.current_count - item.previous_count
+            )
             delta = growth.current_count - growth.previous_count
             if delta > 0:
                 items.append(
@@ -535,17 +452,6 @@ class ComplaintService:
                 ),
             ]
         )
-        # 첫 달에는 승인된 카테고리가 없어 모든 민원이 후보에 묶여 있다. 무엇을 승인할지 알린다
-        candidates = await self._candidates.list_by("pending", None)
-        if candidates:
-            items.append(
-                ComplaintInsight(
-                    type="candidates",
-                    title="승인 대기 후보",
-                    description=f"신규 카테고리 후보 {len(candidates)}개가 승인을 기다립니다.",
-                    count=sum(c.size for c in candidates),
-                )
-            )
         return ComplaintInsights(items=items)
 
     async def candidates(
@@ -572,37 +478,6 @@ class ComplaintService:
         return await asyncio.to_thread(
             load_vectors, self._storage, [(m.id, m.file_id, m.job_id) for m in members]
         )
-
-    async def same_category(self, candidate_id: ObjectId) -> str | None:
-        """후보와 사실상 같은 기존 활성 카테고리 ID. 없으면 None.
-
-        후보 소속 민원의 중심과 카테고리 중심의 유사도가 병합 기준(taxonomy.merge_similarity)
-        이상이면 같은 카테고리로 본다. 같은 파일을 다시 분석해 같은 민원이 다시 후보가 됐을 때
-        자동 승인이 같은 카테고리를 또 만들지 않게 하려고 쓴다.
-
-        파라미터:
-            candidate_id: 후보 _id
-        """
-        latest = await self._categories.latest_version()
-        categories = (
-            [c for c in await self._categories.list_version(latest) if c.status == "active"]
-            if latest
-            else []
-        )
-        if not categories:
-            return None
-        vectors = await self._member_vectors(await self._complaints.by_candidate(candidate_id))
-        if not vectors:
-            return None
-        matrix = np.stack(list(vectors.values())).astype(np.float32)
-        center = normalize(matrix.mean(axis=0, keepdims=True))[0]
-        threshold = load_analysis_config().taxonomy.merge_similarity
-        best_id, best = None, threshold
-        for category in categories:
-            similarity = float(np.asarray(category.centroid, dtype=np.float32) @ center)
-            if similarity >= best:
-                best_id, best = category.category_id, similarity
-        return best_id
 
     async def _retro_assign(self, version: int) -> int:
         """미배정 풀을 새 체계로 다시 배정한다(소급 배정). 새로 배정된 수를 돌려준다.
@@ -847,52 +722,6 @@ class ComplaintService:
             c.id: c for c in await self._complaints.get_many([r.complaint_id for r in found])
         }
         return [(r, complaints.get(r.complaint_id)) for r in found], total
-
-    async def assign_file_category(
-        self, file_id: str, category_id: str, decided_by: str
-    ) -> FileCategoryResult:
-        """파일의 활성 민원 전체를 한 카테고리로 사람이 확정한다(대시보드의 파일별 카테고리 선택).
-
-        검토 저장과 같은 기준을 쓴다: 현재 체계의 활성 카테고리만, 배정 상태는 confirmed,
-        검토 대기 표시는 내리고 그 민원들의 대기 검토도 끝낸다.
-        분석된 민원이 없으면(분석 전·실패) 409로 알린다.
-
-        파라미터:
-            file_id: 파일 ID 문자열
-            category_id: 확정할 카테고리 ID
-            decided_by: 확정한 사람(검토 이력에 남김)
-        """
-        oid = parse_file_id(file_id)
-        if await self._files.get(oid) is None:
-            raise AppError("FILE_NOT_FOUND", "파일을 찾을 수 없습니다.", 404)
-        latest = await self._categories.latest_version()
-        category = await self._categories.get_in_version(category_id, latest) if latest else None
-        if category is None or category.status != "active":
-            raise AppError("CATEGORY_NOT_FOUND", "카테고리가 현재 체계에 없습니다.", 422)
-        complaint_ids = await self._complaints.active_ids_by_file(oid)
-        if not complaint_ids:
-            raise AppError(
-                "NO_COMPLAINTS",
-                "이 파일에는 분석된 민원이 없습니다. 민원 분석이 끝난 뒤 고를 수 있습니다.",
-                409,
-            )
-        fields: dict[str, object] = {
-            "categoryId": category.category_id,
-            "group": category.group,
-            "assignStatus": "confirmed",
-            "taxonomyVersion": latest,
-            "needsReview": False,
-        }
-        await self._complaints.update_fields([(cid, fields) for cid in complaint_ids])
-        closed = await self._reviews.complete_for_complaints(
-            complaint_ids, category.category_id, decided_by, utc_now()
-        )
-        return FileCategoryResult(
-            file_id=file_id,
-            category_id=category.category_id,
-            updated_count=len(complaint_ids),
-            reviews_closed=closed,
-        )
 
     async def review(self, review_id: str, request: ReviewDecisionRequest) -> ReviewDocument:
         """검토 결과를 저장한다. 카테고리를 주면 그 카테고리로 확정(confirmed)하고,

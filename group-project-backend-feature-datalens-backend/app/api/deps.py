@@ -187,7 +187,6 @@ def get_dataset_service(
 
 
 def get_complaint_service(
-    user: CurrentUser,
     mongo: Annotated[Mongo, Depends(get_mongo)],
     settings: Annotated[Settings, Depends(get_app_settings)],
     owner_id: OwnerId,
@@ -195,20 +194,16 @@ def get_complaint_service(
     """요청마다 민원 분석 서비스를 만든다.
 
     파라미터:
-        user: 로그인한 사용자(인증이 꺼져 있으면 None)
         mongo: Mongo 인스턴스
         settings: 앱 설정
     """
-    # 결정 권한은 관리자에게만 있으므로 관리자는 모든 사용자의 민원·후보·검토를 봐야 한다.
-    # 파일·작업은 그대로 본인 것만 다룬다
-    scope = None if user is not None and user.role == "admin" else owner_id
     return ComplaintService(
         FileRepository(mongo.db, owner_id),
         JobRepository(mongo.db, owner_id),
-        ComplaintRepository(mongo.db, scope),
+        ComplaintRepository(mongo.db, owner_id),
         CategoryRepository(mongo.db),
-        CandidateRepository(mongo.db, scope),
-        ReviewRepository(mongo.db, scope),
+        CandidateRepository(mongo.db, owner_id),
+        ReviewRepository(mongo.db, owner_id),
         TaxonomyChangeRepository(mongo.db),
         create_storage(settings.storage_provider, settings.storage_root),
         settings,

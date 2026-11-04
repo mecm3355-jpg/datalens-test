@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { Button } from "../components/Button";
 import heroImage from "../assets/about-hero.png";
 import categoryImage from "../assets/about-category.jpg";
@@ -9,30 +9,30 @@ import flowImage from "../assets/about-flow.jpg";
 import "../styles/about.css";
 
 const copy =
-  "데이터렌즈는 민원 동향과 카테고리를 한 화면에서 보고 정리할 수 있게 만든 분석 서비스입니다.";
+  "데이터렌즈는 파일 수집, 품질 진단, 규칙 승인, 정제 결과를 한 흐름으로 관리하는 데이터 품질 서비스입니다.";
 
 const features = [
   {
-    title: "민원 동향",
-    body: "기간별 민원 추이와 전체 현황을 한눈에 확인하세요.",
+    title: "파일 품질 현황",
+    body: "파일별 처리 상태와 완전성·유일성·유효성·일관성을 한눈에 확인하세요.",
     image: heroImage,
-    imageAlt: "민원 분석 화면",
+    imageAlt: "데이터 품질 분석 화면",
   },
   {
-    title: "카테고리별 집계",
-    body: "민원 유형별 건수와 비중을 자동으로 집계하세요.",
+    title: "형식별 데이터 추출",
+    body: "CSV·JSON·텍스트·이미지에서 필요한 데이터와 메타데이터를 추출하세요.",
     image: categoryImage,
     imageAlt: "건수와 비중을 보여주는 집계 화면",
   },
   {
-    title: "주요 이슈 및 검토",
-    body: "분석 결과를 검토하고 확인이 필요한 항목을 파악하세요.",
+    title: "정제 규칙 승인",
+    body: "예상 변경 건수를 확인하고 필요한 규칙만 선택해 적용하세요.",
     image: reviewImage,
-    imageAlt: "여러 현황을 함께 검토하는 화면",
+    imageAlt: "정제 규칙을 검토하는 화면",
   },
   {
     title: "데이터 관리",
-    body: "분석한 데이터와 결과를 저장하고 다시 활용하세요.",
+    body: "원본과 정제 결과를 비교하고 CSV 또는 JSON으로 내려받으세요.",
     image: dataImage,
     imageAlt: "저장된 데이터가 이어지는 모습",
   },
@@ -41,30 +41,28 @@ const features = [
 const spots = [
   { title: "대시보드", to: "/" },
   { title: "파일", to: "/files" },
-  { title: "카테고리", to: "/categories" },
-  { title: "검토", to: "/reviews" },
-  { title: "이슈", to: "/issues" },
+  { title: "분석 리포트", to: "/data" },
 ];
 
 const introSteps = [
   {
-    title: "데이터 분석 및 자동 집계",
-    body: "복잡한 데이터도 파일 업로드만으로 분석을 시작하세요. 반복적인 집계 과정을 자동화해 주요 현황과 데이터 흐름을 빠르게 파악할 수 있습니다.",
+    title: "형식 검증 및 데이터 추출",
+    body: "확장자뿐 아니라 실제 내용을 확인하고 형식에 맞는 추출기로 미리보기와 기본 통계를 생성합니다.",
     icon: "chart",
   },
   {
-    title: "데이터 검토 및 이슈 확인",
-    body: "분석 결과를 검토하고 주요 이슈를 한눈에 확인하세요. 놓치기 쉬운 확인 사항을 빠르게 파악해 데이터 검토의 효율성을 높일 수 있습니다.",
+    title: "품질 진단 및 영향 확인",
+    body: "누락값, 중복, 공백, 날짜 형식 문제를 찾고 규칙을 적용하기 전에 예상 변경 건수를 확인합니다.",
     icon: "check",
   },
   {
-    title: "민원 유형 자동 분류",
-    body: "민원 데이터를 유형별로 분류해 반복되는 문의와 주요 이슈를 쉽게 확인하세요. 수작업으로 분류하고 정리하는 시간을 줄여 문제 해결에 집중할 수 있습니다.",
+    title: "승인 기반 데이터 정제",
+    body: "추천 규칙은 자동 실행하지 않습니다. 사용자가 선택한 규칙만 적용하고 원본과 결과를 나란히 비교합니다.",
     icon: "flow",
   },
   {
     title: "데이터 저장 및 관리",
-    body: "분석한 데이터를 저장하고 필요할 때 다시 확인하세요. 데이터와 분석 결과를 체계적으로 관리해 반복 업무를 줄이고 지속적인 활용을 지원합니다.",
+    body: "정제 결과를 CSV 또는 JSON으로 내려받고, 백엔드 연결 후에는 작업 이력과 결과 버전을 계속 관리합니다.",
     icon: "file",
   },
 ] as const;
@@ -77,14 +75,14 @@ export function AboutPage() {
     <div className="page about">
       <section className="about-hero">
         <h1>
-          민원 데이터 분석,
+          데이터 품질 관리,
           <br />
           업로드 한 번으로 끝내세요.
         </h1>
         <p>
-          데이터 업로드부터 자동 집계, 민원 분류와 결과 관리까지.
+          파일 업로드부터 품질 진단, 규칙 승인과 결과 관리까지.
           <br className="about-hero-break" />
-          반복 업무를 줄이고 핵심 이슈를 빠르게 파악하세요.
+          코딩 없이 데이터 문제를 찾고 안전하게 정제하세요.
         </p>
         <div className="about-actions">
           <Button to="/">대시보드 보기</Button>
@@ -125,9 +123,9 @@ export function AboutPage() {
           <article className="about-card about-card-lead">
             <img className="about-lead-image" src={flowImage} alt="" />
             <div className="about-lead-copy">
-              <h3>복잡한 민원 데이터 분석, 한 번에 해결하세요.</h3>
+              <h3>흩어진 파일의 품질 관리, 한 번에 해결하세요.</h3>
               <p>
-                데이터 파일 업로드만으로 자동 집계부터 민원 유형 분류까지.
+                여러 파일 업로드부터 형식 검증과 정제 결과 생성까지.
                 <br />
                 반복적인 데이터 정리 업무를 줄이고, 더 빠른 의사결정을 시작하세요.
               </p>
@@ -150,9 +148,9 @@ export function AboutPage() {
       <section className="about-quote">
         <blockquote>
           <p>
-            데이터렌즈는 민원 동향과 카테고리를 한 화면에서
+            데이터렌즈는 파일 상태와 품질 지표를 한 화면에서
             <br className="about-quote-break" />
-            보고 정리할 수 있게 만든 분석 서비스입니다.
+            확인하고 정제할 수 있게 만든 분석 서비스입니다.
           </p>
         </blockquote>
       </section>
@@ -172,7 +170,7 @@ export function AboutPage() {
 
       <section className="about-close">
         <h2>데이터 정리는 간편하게, 문제 해결은 더 빠르게!</h2>
-        <p>DataLens로 반복적인 분석 업무를 줄이고 민원 데이터의 핵심을 확인해 보세요.</p>
+        <p>DataLens로 반복적인 정리 업무를 줄이고 데이터 품질의 핵심을 확인해 보세요.</p>
         <div className="about-actions">
           <Button to="/">대시보드 보기</Button>
         </div>

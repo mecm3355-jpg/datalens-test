@@ -1,8 +1,6 @@
-import json
 import os
 from pathlib import Path
 
-import httpx2 as httpx
 import pytest
 from pydantic import BaseModel, SecretStr
 
@@ -13,10 +11,7 @@ from app.services.llm import (
     ChatReply,
     LlmClient,
     ModelTier,
-    RelayChatBackend,
-    chat_backend,
     create_llm_client,
-    llm_configured,
 )
 from app.services.storage import LocalStorage
 
@@ -230,80 +225,3 @@ async def test_live_azure_openai(tmp_path: Path, tier: ModelTier) -> None:
     assert result.name
     assert client.usage.calls == 1
     assert client.usage.prompt_tokens > 0
-
-
-RELAY_TOKEN = "r" * 40
-
-
-def relay_settings(tmp_path: Path, token: str = RELAY_TOKEN) -> Settings:
-    """Azure 직접 연결 없이 AI 중계만 설정한 앱 설정.
-
-    파라미터:
-        tmp_path: 캐시 폴더
-        token: 중계 출입증
-    """
-    return llm_settings(tmp_path).model_copy(
-        update={
-            "llm_relay_url": "https://relay.example/api/chat",
-            "llm_relay_token": SecretStr(token),
-        }
-    )
-
-
-async def test_relay_backend_sends_schema_and_returns_reply(tmp_path: Path) -> None:
-    sent: list[httpx.Request] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        return httpx.Response(
-            200,
-            json={
-                "content": '{"name":"가로등 고장"}',
-                "refusal": None,
-                "finishReason": "stop",
-                "promptTokens": 9,
-                "completionTokens": 4,
-            },
-        )
-
-    backend = RelayChatBackend(relay_settings(tmp_path), "deep", httpx.MockTransport(answer))
-    reply = await backend.complete("지시문", "마스킹본", CategoryName)
-
-    assert reply == ChatReply(
-        content='{"name":"가로등 고장"}', prompt_tokens=9, completion_tokens=4
-    )
-    assert sent[0].headers["authorization"] == f"Bearer {RELAY_TOKEN}"
-    body = json.loads(sent[0].content)
-    assert (body["tier"], body["system"], body["user"]) == ("deep", "지시문", "마스킹본")
-    # SDK parse()와 같은 엄격한 JSON 스키마를 보낸다
-    assert body["response_format"]["type"] == "json_schema"
-    assert body["response_format"]["json_schema"]["strict"] is True
-
-
-async def test_relay_errors_become_app_errors(tmp_path: Path) -> None:
-    def failing(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(502, json={"error": "AI 호출 실패", "upstreamStatus": 429})
-
-    def truncated(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"content": '{"na', "finishReason": "length"})
-
-    with pytest.raises(AppError) as failed:
-        await RelayChatBackend(
-            relay_settings(tmp_path), "fast", httpx.MockTransport(failing)
-        ).complete("s", "u", CategoryName)
-    assert failed.value.code == "LLM_ERROR"
-    with pytest.raises(AppError) as cut:
-        await RelayChatBackend(
-            relay_settings(tmp_path), "fast", httpx.MockTransport(truncated)
-        ).complete("s", "u", CategoryName)
-    assert cut.value.code == "LLM_INVALID_RESPONSE"
-
-
-def test_relay_is_used_only_without_direct_azure(tmp_path: Path) -> None:
-    # Azure 직접 연결이 없고 중계가 설정되면 중계로 부른다
-    assert llm_configured(relay_settings(tmp_path), "fast")
-    assert isinstance(chat_backend(relay_settings(tmp_path), "fast"), RelayChatBackend)
-    # 출입증이 짧으면 설정되지 않은 것으로 본다(중계 서버도 받지 않는다)
-    assert not llm_configured(relay_settings(tmp_path, token="short"), "fast")
-    # 둘 다 없으면 LLM 없이 규칙 방식으로 돈다
-    assert not llm_configured(llm_settings(tmp_path), "fast")

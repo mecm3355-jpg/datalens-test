@@ -74,37 +74,6 @@ class ReviewRepository(BaseRepository[ReviewDocument]):
         )
         return result.modified_count == 1
 
-    async def complete_for_complaints(
-        self,
-        complaint_ids: Sequence[ObjectId],
-        category_id: str,
-        reviewed_by: str,
-        reviewed_at: datetime,
-    ) -> int:
-        """민원들의 대기 검토를 한꺼번에 끝낸다(파일 단위 카테고리 확정). 끝낸 수를 돌려준다.
-
-        파라미터:
-            complaint_ids: 민원 _id 목록
-            category_id: 확정한 카테고리
-            reviewed_by: 확정한 사람
-            reviewed_at: 확정 일시
-        """
-        if not complaint_ids:
-            return 0
-        result = await self.collection.update_many(
-            # 끝난 검토는 이미 내린 판단이라 덮어쓰지 않고 대기 건만 끝낸다
-            self._scoped({"complaintId": {"$in": list(complaint_ids)}, "status": "pending"}),
-            {
-                "$set": {
-                    "status": "done",
-                    "reviewedCategoryId": category_id,
-                    "reviewedBy": reviewed_by,
-                    "reviewedAt": reviewed_at,
-                }
-            },
-        )
-        return result.modified_count
-
     async def delete_by_complaints(self, complaint_ids: Sequence[ObjectId]) -> None:
         """민원들의 검토를 지운다(파일 삭제 때).
 
