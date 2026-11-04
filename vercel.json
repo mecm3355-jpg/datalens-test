@@ -18,30 +18,6 @@
       "root": "group-project-blob-upload-service",
       "entrypoint": "api/blob-upload.ts"
     },
-    "queue_worker": {
-      "root": "group-project-queue-worker-service",
-      "entrypoint": "api/process-job.ts",
-      "bindings": [
-        {
-          "type": "service",
-          "service": "backend",
-          "format": "url",
-          "env": "BACKEND_INTERNAL_URL"
-        }
-      ],
-      "functions": {
-        "api/process-job.ts": {
-          "maxDuration": 300,
-          "experimentalTriggers": [
-            {
-              "type": "queue/v2beta",
-              "topic": "datalens-jobs",
-              "retryAfterSeconds": 5
-            }
-          ]
-        }
-      }
-    },
     "backend": {
       "root": "group-project-backend-feature-datalens-backend",
       "entrypoint": "app.vercel:app"

@@ -1,11 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import * as api from "../lib/api";
-import type { AuthUser } from "../lib/api";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { AppError } from "../api/AppError";
+import { datalensApi, type AuthUser } from "../api/datalens";
 
 type SessionValue = {
-  // 처음 세션을 확인하는 동안 true. 그동안 로그인 화면으로 보내지 않는다
-  loading: boolean;
   loggedIn: boolean;
+  loading: boolean;
   user: AuthUser | null;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, displayName: string, password: string) => Promise<void>;
@@ -13,48 +12,52 @@ type SessionValue = {
 };
 
 const SessionContext = createContext<SessionValue | null>(null);
+const API_MODE = import.meta.env.VITE_DATA_MODE === "api";
 
-/** 서버 로그인 세션(쿠키)을 화면 상태로 연결합니다. */
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [loading, setLoading] = useState(true);
+  const [loggedIn, setLoggedIn] = useState(!API_MODE);
+  const [loading, setLoading] = useState(API_MODE);
   const [user, setUser] = useState<AuthUser | null>(null);
-
   useEffect(() => {
-    let cancelled = false;
-    api
-      .loadSession()
-      .then((next) => {
-        if (!cancelled) setUser(next);
+    if (!API_MODE) return;
+    let active = true;
+    void datalensApi.session()
+      .then((session) => {
+        if (!active) return;
+        setLoggedIn(session.authenticated);
+        setUser(session.user);
       })
-      // 세션 확인이 실패하면 로그인하지 않은 것으로 보고 로그인 화면에서 다시 시도하게 한다
       .catch(() => {
-        if (!cancelled) setUser(null);
+        if (!active) return;
+        setLoggedIn(false);
+        setUser(null);
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
-
-  const login = useCallback(async (email: string, password: string) => {
-    setUser(await api.login(email, password));
-  }, []);
-  const signup = useCallback(async (email: string, displayName: string, password: string) => {
-    setUser(await api.signup(email, displayName, password));
-  }, []);
-  const logout = useCallback(async () => {
-    try {
-      await api.logout();
-    } finally {
-      setUser(null);
-    }
-  }, []);
-
   const value = useMemo(
-    () => ({ loading, loggedIn: user !== null, user, login, signup, logout }),
-    [loading, user, login, signup, logout],
+    () => ({
+      loggedIn,
+      loading,
+      user,
+      login: async (email: string, password: string) => {
+        if (API_MODE) setUser(await datalensApi.login(email, password));
+        setLoggedIn(true);
+      },
+      signup: async (email: string, displayName: string, password: string) => {
+        if (API_MODE) setUser(await datalensApi.signup(email, displayName, password));
+        setLoggedIn(true);
+      },
+      logout: async () => {
+        try {
+          if (API_MODE) await datalensApi.logout();
+        } finally {
+          setLoggedIn(false);
+          setUser(null);
+        }
+      },
+    }),
+    [loading, loggedIn, user],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
@@ -63,7 +66,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 export function useSession() {
   const value = useContext(SessionContext);
   if (!value) {
-    throw new Error("세션이 없습니다.");
+    throw new AppError("SESSION_PROVIDER_MISSING", "SessionProvider가 필요합니다.");
   }
   return value;
 }

@@ -6,7 +6,6 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from app.api.deps import (
-    AdminUser,
     get_cleaning_service,
     get_complaint_service,
     get_dataset_service,
@@ -23,13 +22,7 @@ from app.schemas.cleaning_api import (
     VersionList,
 )
 from app.schemas.common import ApiResponse, ok
-from app.schemas.complaint_api import (
-    AnalysisResult,
-    AnalysisStartResult,
-    ComplaintAnalysisRequest,
-    FileCategoryRequest,
-    FileCategoryResult,
-)
+from app.schemas.complaint_api import AnalysisResult, AnalysisStartResult, ComplaintAnalysisRequest
 from app.schemas.dataset import MappingSuggestion, MergeRequest, MergeStartResult
 from app.schemas.file import FileStatus
 from app.schemas.file_api import (
@@ -421,21 +414,3 @@ async def suggest_mapping(service: Datasets, file_id: str) -> ApiResponse[Mappin
     """
     # 제안만 돌려주고 저장하지 않는다. 사용자가 고친 매핑은 merge 요청에 담겨 온다
     return ok(await service.suggest_mapping(file_id))
-
-
-@router.post("/{file_id}/category", response_model=ApiResponse[FileCategoryResult])
-async def assign_file_category(
-    service: Complaints, file_id: str, request: FileCategoryRequest, admin: AdminUser
-) -> ApiResponse[FileCategoryResult]:
-    """[명세서 외] 파일의 민원 전체를 한 카테고리로 확정한다(대시보드의 파일별 카테고리 선택).
-
-    검토 저장과 같이 관리자만 할 수 있고, 확정한 사람은 로그인 세션에서 채운다.
-
-    파라미터:
-        service: 민원 분석 서비스
-        file_id: 파일 ID
-        request: 확정할 카테고리
-        admin: 로그인한 관리자(인증이 꺼져 있으면 None)
-    """
-    decided_by = admin.display_name if admin is not None else "로컬 운영자"
-    return ok(await service.assign_file_category(file_id, request.category_id, decided_by))

@@ -4,7 +4,8 @@ import { CategoryTabs } from "../components/CategoryTabs";
 import { PageIntro } from "../components/PageIntro";
 import { formatNumber, formatPeriod } from "../lib/format";
 import { DECISION_LABEL } from "../lib/labels";
-import { useCatalog } from "../state/catalog";
+import { useComplaintData } from "../state/complaintData";
+import { useSession } from "../state/session";
 import type { CandidateDecision } from "../types";
 
 const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
@@ -14,21 +15,36 @@ const FILTERS: Array<{ id: "all" | CandidateDecision; label: string }> = [
   { id: "held", label: "보류" },
   { id: "merged", label: "기존에 합침" },
 ];
+const CURRENT_PERIOD = new Date().toISOString().slice(0, 7);
 
 export function CandidatesPage() {
-  const { candidates, categories, categoryById, currentPeriod, decideCandidate } = useCatalog();
+  const { candidates, categories, categoryById, decideCandidate, loading, error } = useComplaintData();
+  const { user } = useSession();
+  const canManage = user?.role === "admin" || user === null;
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("pending");
   const [mergeTarget, setMergeTarget] = useState<Record<string, string>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
   const visible = candidates.filter((item) => filter === "all" || item.decision === filter);
+
+  const decide = async (id: string, decision: CandidateDecision, mergedIntoId?: string) => {
+    try {
+      await decideCandidate(id, decision, mergedIntoId);
+      setActionError(null);
+    } catch (decisionError) {
+      setActionError(decisionError instanceof Error ? decisionError.message : "후보 결정을 저장하지 못했습니다.");
+    }
+  };
 
   return (
     <div className="page">
       <PageIntro
-        eyebrow={formatPeriod(currentPeriod)}
+        eyebrow={formatPeriod(candidates[0]?.period ?? CURRENT_PERIOD)}
         title="신규 후보"
         lede="미배정 민원 중 같은 군집이 5건 이상이거나 두 달 연속 등장한 유형입니다. 승인하면 다음 체계 버전에 들어갑니다."
       />
       <CategoryTabs />
+      {loading ? <p className="notice">후보 데이터를 불러오는 중입니다.</p> : null}
+      {error || actionError ? <p className="feedback feedback-error" role="alert">{actionError ?? error}</p> : null}
       <div className="filter-bar" aria-label="후보 상태">
         {FILTERS.map((item) => (
           <button
@@ -45,8 +61,7 @@ export function CandidatesPage() {
       <div className="stack">
         {visible.map((candidate) => {
           const decision = candidate.decision;
-          const mergedId = candidate.mergedIntoCategoryId;
-          const mergedName = categoryById(mergedId)?.name;
+          const mergedName = categoryById(candidate.mergedIntoCategoryId ?? mergeTarget[candidate.id] ?? null)?.name;
           return (
             <article className="card" key={candidate.id}>
               <div className="card-head">
@@ -73,10 +88,10 @@ export function CandidatesPage() {
                   {text}
                 </p>
               ))}
-              {decision === "pending" ? (
+              {decision === "pending" && canManage ? (
                 <div className="action-row notice">
-                  <Button onClick={() => void decideCandidate(candidate.id, "approved")}>승인</Button>
-                  <Button variant="secondary" onClick={() => void decideCandidate(candidate.id, "held")}>
+                  <Button onClick={() => void decide(candidate.id, "approved")}>승인</Button>
+                  <Button variant="secondary" onClick={() => void decide(candidate.id, "held")}>
                     보류
                   </Button>
                   <label className="field field-merge">
@@ -98,7 +113,7 @@ export function CandidatesPage() {
                   <Button
                     variant="secondary"
                     onClick={() =>
-                      void decideCandidate(
+                      void decide(
                         candidate.id,
                         "merged",
                         mergeTarget[candidate.id] ?? categories[0]?.categoryId,
@@ -109,7 +124,11 @@ export function CandidatesPage() {
                   </Button>
                 </div>
               ) : null}
+              {decision === "pending" && !canManage ? <p className="notice">관리자만 후보를 결정할 수 있습니다.</p> : null}
               {decision === "merged" && mergedName ? <p className="notice">합친 대상: {mergedName}</p> : null}
+              {decision !== "pending" && candidate.decidedBy ? (
+                <p className="caption">결정자: {candidate.decidedBy}{candidate.decidedAt ? ` · ${candidate.decidedAt}` : ""}</p>
+              ) : null}
             </article>
           );
         })}

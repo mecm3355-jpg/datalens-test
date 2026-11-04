@@ -20,14 +20,85 @@ export type CandidateDecision = "pending" | "approved" | "held" | "merged";
 
 export type MappingType = "merge" | "split";
 
+export type CleaningDecision = "pending" | "approved" | "rejected";
+
+export type CleaningRule = {
+  id: string;
+  name: string;
+  description: string;
+  affectedRows: number;
+  severity: "recommended" | "required";
+  target?: string;
+  reason?: string;
+  backendRule?: import("./api/datalens").ApiCleanRule;
+};
+
+export type CleaningPreviewRow = {
+  id: string;
+  row: number;
+  field: string;
+  before: string;
+  after: string;
+  ruleId: string;
+};
+
+export type DemoCleaningArtifact = {
+  rules: CleaningRule[];
+  preview: CleaningPreviewRow[];
+  rows: Array<Record<string, string>>;
+  cleanedRows?: Array<Record<string, string>>;
+  truncated: boolean;
+  source: "parsed" | "metadata";
+  analysis?: FileAnalysis;
+  qualityIssues?: QualityIssue[];
+};
+
+export type NumericSummary = {
+  field: string;
+  count: number;
+  average: number;
+  minimum: number;
+  maximum: number;
+};
+
+export type FrequencyItem = {
+  value: string;
+  count: number;
+};
+
+export type QualityProfile = {
+  completeness: number;
+  uniqueness: number;
+  validity: number;
+  consistency: number;
+  score: number;
+  missingCells: number;
+  duplicateRows: number;
+};
+
+export type FileAnalysis = {
+  detectedFormat: string;
+  supported: boolean;
+  quality: QualityProfile | null;
+  numericSummaries: NumericSummary[];
+  frequencies: FrequencyItem[];
+  textStats: { lines: number; words: number; characters: number } | null;
+  imageMetadata: { width: number | null; height: number | null } | null;
+  thumbnail: string | null;
+};
+
 export type MappingField =
+  | "title"
   | "content"
   | "receivedAt"
   | "region"
+  | "address"
   | "longitude"
   | "latitude"
   | "agency"
   | "sourceId"
+  | "sourceCategory"
+  | "result"
   | "ignore";
 
 export type Category = {
@@ -97,7 +168,10 @@ export type Candidate = {
   suggestedGroup: string;
   decision: CandidateDecision;
   exemplars: string[];
+  categoryId?: string | null;
   mergedIntoCategoryId?: string | null;
+  decidedBy?: string | null;
+  decidedAt?: string | null;
 };
 
 export type ReviewItem = {
@@ -106,7 +180,27 @@ export type ReviewItem = {
   reason: ReviewReason;
   suggestedCategoryId: string | null;
   reviewedCategoryId?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
   status: "pending" | "done";
+};
+
+export type DataReport = {
+  summary: string;
+  keyFindings: string[];
+  qualityIssues: Array<{
+    severity: "high" | "medium" | "low";
+    issue: string;
+    likelyCause: string;
+    impact: string;
+  }>;
+  cleaningRecommendations: Array<{
+    priority: "high" | "medium" | "low";
+    action: string;
+    reason: string;
+  }>;
+  analysisSuggestions: string[];
+  caveats: string[];
 };
 
 export type DataFile = {
@@ -117,11 +211,17 @@ export type DataFile = {
   sizeBytes: number;
   status: FileStatus;
   createdAt: string;
+  mimeType?: string;
+  storageLocation?: string;
+  analysisSupported?: boolean;
+  cleaningSupported?: boolean;
   rowCount: number | null;
   columns: string[];
   mapping: Partial<Record<string, MappingField>>;
   swappedAxes?: boolean;
-  lastJobId?: string | null;
+  uploadProgress?: number;
+  isUploading?: boolean;
+  processingError?: string;
 };
 
 export type Job = {

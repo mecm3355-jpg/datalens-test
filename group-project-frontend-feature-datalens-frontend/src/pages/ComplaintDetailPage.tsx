@@ -1,10 +1,11 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { Button } from "../components/Button";
 import { PageIntro } from "../components/PageIntro";
-import { useCatalog } from "../state/catalog";
 import { formatDate, formatRatio } from "../lib/format";
 import { ASSIGN_LABEL, REVIEW_REASON_LABEL } from "../lib/labels";
 import type { Attributes } from "../types";
+import { useComplaintData } from "../state/complaintData";
+import { useWorkspace } from "../state/workspace";
 
 const ATTRIBUTE_LABEL: Record<keyof Attributes, string> = {
   facility: "대상 시설",
@@ -17,13 +18,14 @@ const ATTRIBUTE_LABEL: Record<keyof Attributes, string> = {
 
 export function ComplaintDetailPage() {
   const { complaintId = "" } = useParams();
-  const { complaintById, categoryById, files, issueById, status } = useCatalog();
-  const complaint = complaintById(complaintId);
+  const { complaints, issues, categoryById } = useComplaintData();
+  const { files } = useWorkspace();
+  const complaint = complaints.find((item) => item.id === complaintId);
 
   if (!complaint) {
     return (
       <div className="page">
-        <PageIntro title={status === "loading" ? "민원을 불러오는 중" : "민원을 찾을 수 없습니다"} />
+        <PageIntro title="민원을 찾을 수 없습니다" />
         <Button variant="secondary" to="/complaints">
           민원 목록
         </Button>
@@ -34,7 +36,9 @@ export function ComplaintDetailPage() {
   const category = categoryById(complaint.categoryId);
   const runnerUp = categoryById(complaint.runnerUpCategoryId);
   const file = files.find((item) => item.id === complaint.fileId);
-  const issue = issueById(complaint.issueId ?? "");
+  const issue = issues.find((item) =>
+    item.categoryId === complaint.categoryId && item.place === complaint.attributes.place,
+  );
   const locator = complaint.sourceLocator.row
     ? `행 ${complaint.sourceLocator.row}`
     : `페이지 ${complaint.sourceLocator.page ?? "—"}`;
